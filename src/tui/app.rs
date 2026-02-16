@@ -94,6 +94,11 @@ pub struct RunningState {
     pub loading: bool,
 }
 
+pub struct ConfigState {
+    pub profiles: Vec<(String, String)>, // (name, url) pairs
+    pub list_state: ListState,
+}
+
 pub struct ModelPickerState {
     pub filter: String,
     pub filtered_models: Vec<String>,
@@ -118,6 +123,7 @@ pub struct ConfirmState {
 pub enum ConfirmAction {
     DeleteModel(String),
     UnloadModel(String),
+    RemoveProfile(String),
 }
 
 /// State for a text input dialog overlay
@@ -131,7 +137,9 @@ pub struct TextInputState {
 #[derive(Clone)]
 pub enum TextInputAction {
     PullModel,
-    CopyModel(String), // source model name
+    CopyModel(String),
+    ConfigAddName,
+    ConfigAddUrl(String), // profile name, now asking for URL
 }
 
 /// State for an active pull operation
@@ -169,6 +177,7 @@ pub struct App {
     pub chat: ChatState,
     pub models: ModelsState,
     pub running: RunningState,
+    pub config_state: ConfigState,
 
     pub status_message: Option<(String, Instant)>,
     pub connected: bool,
@@ -231,6 +240,11 @@ impl App {
                 models: Vec::new(),
                 table_state: TableState::default(),
                 loading: false,
+            },
+
+            config_state: ConfigState {
+                profiles: Vec::new(),
+                list_state: ListState::default(),
             },
 
             status_message: None,
@@ -316,6 +330,7 @@ impl App {
                 }
                 Section::Models => InputContext::ModelsTable,
                 Section::Running => InputContext::RunningTable,
+                Section::Config => InputContext::ConfigTable,
                 _ => InputContext::Global,
             },
         }
@@ -378,6 +393,12 @@ impl App {
             Action::RefreshRunning => self.fetch_running(),
             Action::UnloadModel => self.confirm_unload_model(),
 
+            // Config
+            Action::ConfigAddProfile => self.config_add_profile(),
+            Action::ConfigRemoveProfile => self.config_remove_profile(),
+            Action::ConfigSwitchProfile => self.config_switch_profile(),
+            Action::ConfigTestConnection => self.config_test_connection(),
+
             // Confirmation
             Action::ConfirmYes | Action::ConfirmNo => {}
 
@@ -401,6 +422,7 @@ impl App {
             Focus::MainPanel => match self.active_section {
                 Section::Models => self.navigate_models_table(delta),
                 Section::Running => self.navigate_running_table(delta),
+                Section::Config => self.navigate_config_table(delta),
                 _ => {}
             },
         }
@@ -433,6 +455,16 @@ impl App {
         self.running.table_state.select(Some(next));
     }
 
+    fn navigate_config_table(&mut self, delta: i32) {
+        let len = self.config_state.profiles.len();
+        if len == 0 {
+            return;
+        }
+        let current = self.config_state.list_state.selected().unwrap_or(0) as i32;
+        let next = (current + delta).rem_euclid(len as i32) as usize;
+        self.config_state.list_state.select(Some(next));
+    }
+
     fn select_sidebar_section(&mut self) {
         if let Some(idx) = self.sidebar_state.selected() {
             if idx < Section::ALL.len() {
@@ -450,6 +482,7 @@ impl App {
         match next {
             Section::Models => self.fetch_models(),
             Section::Running => self.fetch_running(),
+            Section::Config => self.refresh_config_profiles(),
             _ => {}
         }
     }
@@ -650,6 +683,18 @@ impl App {
         match action {
             TextInputAction::PullModel => self.pull_model(&input),
             TextInputAction::CopyModel(source) => self.copy_model(&source, &input),
+            TextInputAction::ConfigAddName => {
+                // Got the name, now ask for URL
+                self.text_input = Some(TextInputState {
+                    title: "Add Profile".to_string(),
+                    prompt: format!("URL for profile '{}':", input),
+                    input: String::new(),
+                    on_submit: TextInputAction::ConfigAddUrl(input),
+                });
+            }
+            TextInputAction::ConfigAddUrl(name) => {
+                self.config_save_profile(&name, &input);
+            }
         }
     }
 
@@ -863,6 +908,7 @@ impl App {
         match action {
             ConfirmAction::DeleteModel(name) => self.delete_model(&name),
             ConfirmAction::UnloadModel(name) => self.unload_model(&name),
+            ConfirmAction::RemoveProfile(name) => self.config_do_remove(&name),
         }
     }
 
@@ -932,6 +978,191 @@ impl App {
         self.status_message = Some((format!("Unloading {}...", name), Instant::now()));
     }
 
+    // === Config ===
+
+    fn refresh_config_profiles(&mut self) {
+        self.config_state.profiles = self
+            .config
+            .urls
+            .iter()
+            .map(|(name, url)| (name.clone(), url.clone()))
+            .collect();
+        if self.config_state.list_state.selected().is_none()
+            && !self.config_state.profiles.is_empty()
+        {
+            self.config_state.list_state.select(Some(0));
+        }
+    }
+
+    fn config_add_profile(&mut self) {
+        self.text_input = Some(TextInputState {
+            title: "Add Profile".to_string(),
+            prompt: "Profile name:".to_string(),
+            input: String::new(),
+            on_submit: TextInputAction::ConfigAddName,
+        });
+    }
+
+    fn config_save_profile(&mut self, name: &str, url: &str) {
+        if !url.starts_with("http://") && !url.starts_with("https://") {
+            self.status_message = Some((
+                "URL must start with http:// or https://".to_string(),
+                Instant::now(),
+            ));
+            return;
+        }
+
+        self.config
+            .urls
+            .insert(name.to_string(), url.to_string());
+
+        // If this is the first profile, make it active
+        if self.config.active_profile.is_none() {
+            self.config.active_profile = Some(name.to_string());
+            self.config.default_url = url.to_string();
+        }
+
+        match self.config.save() {
+            Ok(()) => {
+                self.status_message = Some((
+                    format!("Added profile '{}'", name),
+                    Instant::now(),
+                ));
+            }
+            Err(e) => {
+                self.status_message = Some((
+                    format!("Failed to save config: {}", e),
+                    Instant::now(),
+                ));
+            }
+        }
+        self.refresh_config_profiles();
+    }
+
+    fn config_remove_profile(&mut self) {
+        let name = if let Some(idx) = self.config_state.list_state.selected() {
+            self.config_state.profiles.get(idx).map(|(n, _)| n.clone())
+        } else {
+            None
+        };
+
+        let Some(name) = name else {
+            self.status_message = Some(("No profile selected".to_string(), Instant::now()));
+            return;
+        };
+
+        if self.config.active_profile.as_deref() == Some(&name) {
+            self.status_message = Some((
+                format!("Cannot remove active profile '{}'. Switch first.", name),
+                Instant::now(),
+            ));
+            return;
+        }
+
+        self.confirm = Some(ConfirmState {
+            title: "Remove Profile".to_string(),
+            message: format!("Remove profile '{}'? (y/n)", name),
+            on_confirm: ConfirmAction::RemoveProfile(name),
+        });
+    }
+
+    fn config_do_remove(&mut self, name: &str) {
+        self.config.urls.remove(name);
+        match self.config.save() {
+            Ok(()) => {
+                self.status_message = Some((
+                    format!("Removed profile '{}'", name),
+                    Instant::now(),
+                ));
+            }
+            Err(e) => {
+                self.status_message = Some((
+                    format!("Failed to save config: {}", e),
+                    Instant::now(),
+                ));
+            }
+        }
+        self.refresh_config_profiles();
+    }
+
+    fn config_switch_profile(&mut self) {
+        let selected = if let Some(idx) = self.config_state.list_state.selected() {
+            self.config_state
+                .profiles
+                .get(idx)
+                .map(|(n, u)| (n.clone(), u.clone()))
+        } else {
+            None
+        };
+
+        let Some((name, url)) = selected else {
+            self.status_message = Some(("No profile selected".to_string(), Instant::now()));
+            return;
+        };
+
+        self.config.active_profile = Some(name.clone());
+        self.config.default_url = url.clone();
+
+        match self.config.save() {
+            Ok(()) => {
+                // Reconnect with the new URL
+                self.client = OllamaClient::new(&url);
+                self.connected = false;
+                self.test_connection();
+                self.fetch_models();
+                self.status_message = Some((
+                    format!("Switched to '{}' ({})", name, url),
+                    Instant::now(),
+                ));
+            }
+            Err(e) => {
+                self.status_message = Some((
+                    format!("Failed to save config: {}", e),
+                    Instant::now(),
+                ));
+            }
+        }
+    }
+
+    fn config_test_connection(&mut self) {
+        let selected = if let Some(idx) = self.config_state.list_state.selected() {
+            self.config_state
+                .profiles
+                .get(idx)
+                .map(|(n, u)| (n.clone(), u.clone()))
+        } else {
+            None
+        };
+
+        let Some((name, url)) = selected else {
+            self.status_message = Some(("No profile selected".to_string(), Instant::now()));
+            return;
+        };
+
+        let test_client = OllamaClient::new(&url);
+        let tx = self.api_tx.clone();
+        let name_display = name.clone();
+
+        tokio::spawn(async move {
+            match test_client.test_connection().await {
+                Ok(()) => {
+                    let _ = tx.send(ApiEvent::Error(format!(
+                        "Profile '{}' ({}) - Connection OK",
+                        name, url
+                    )));
+                }
+                Err(_) => {
+                    let _ = tx.send(ApiEvent::Error(format!(
+                        "Profile '{}' ({}) - Connection FAILED",
+                        name, url
+                    )));
+                }
+            }
+        });
+
+        self.status_message = Some((format!("Testing '{}'...", name_display), Instant::now()));
+    }
+
     // === Chat ===
 
     pub fn send_chat_message(&mut self) {
@@ -945,7 +1176,7 @@ impl App {
             Some(m) => m.clone(),
             None => {
                 self.status_message = Some((
-                    "No model selected. Press Ctrl+M to pick one.".to_string(),
+                    "No model selected. Press Alt+M to pick one.".to_string(),
                     Instant::now(),
                 ));
                 return;

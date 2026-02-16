@@ -34,6 +34,12 @@ pub enum Action {
     RefreshRunning,
     UnloadModel,
 
+    // Config
+    ConfigAddProfile,
+    ConfigRemoveProfile,
+    ConfigSwitchProfile,
+    ConfigTestConnection,
+
     // Confirmation dialog
     ConfirmYes,
     ConfirmNo,

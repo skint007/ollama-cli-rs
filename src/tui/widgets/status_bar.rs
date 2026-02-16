@@ -29,15 +29,8 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         Span::raw("")
     };
 
-    let status_msg = if let Some((msg, _)) = &app.status_message {
-        Span::styled(format!(" {} ", msg), t.status_bar)
-    } else {
-        Span::raw("")
-    };
-
-    // Left side: connection + url + model + status
-    let left =
-        Line::from(vec![connected_indicator, url, model_info, status_msg]).style(t.status_bar);
+    // Left side: connection + url + model
+    let left = Line::from(vec![connected_indicator, url, model_info]).style(t.status_bar);
 
     let left_para = Paragraph::new(left).style(t.status_bar);
 
@@ -107,6 +100,9 @@ fn context_hints(app: &App) -> String {
                 " j/k=Nav  Enter=Detail  p=Pull  c=Copy  d=Delete  ?=Help ".to_string()
             }
             Section::Running => " j/k=Nav  u=Unload  r=Refresh  ?=Help ".to_string(),
+            Section::Config => {
+                " j/k=Nav  Enter=Switch  a=Add  d=Remove  t=Test  ?=Help ".to_string()
+            }
             _ => " ?=Help  q=Quit  Tab=Nav ".to_string(),
         },
     }

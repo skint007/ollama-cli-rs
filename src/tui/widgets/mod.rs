@@ -8,3 +8,4 @@ pub mod pull_progress;
 pub mod sidebar;
 pub mod status_bar;
 pub mod text_input;
+pub mod toast;

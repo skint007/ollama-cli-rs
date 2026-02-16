@@ -7,7 +7,7 @@ use super::app::{App, Section};
 use super::views;
 use super::widgets::{
     confirm_dialog, help_overlay, model_detail, model_picker, pull_progress, sidebar, status_bar,
-    text_input,
+    text_input, toast,
 };
 
 pub fn render(frame: &mut Frame, app: &mut App) {
@@ -66,5 +66,10 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
     if app.show_help {
         help_overlay::render(frame, area, app);
+    }
+
+    // Toast notification (renders above status bar, below modal overlays)
+    if app.status_message.is_some() {
+        toast::render(frame, area, app);
     }
 }
