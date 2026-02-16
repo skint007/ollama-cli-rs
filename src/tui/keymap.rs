@@ -13,6 +13,7 @@ pub enum InputContext {
     RunningTable,
     ConfigTable,
     LibraryTable,
+    BenchmarkTable,
 }
 
 pub fn map_key_event(key: KeyEvent, context: &InputContext) -> Action {
@@ -32,6 +33,7 @@ pub fn map_key_event(key: KeyEvent, context: &InputContext) -> Action {
         InputContext::RunningTable => map_running_key(key),
         InputContext::ConfigTable => map_config_key(key),
         InputContext::LibraryTable => map_library_key(key),
+        InputContext::BenchmarkTable => map_benchmark_key(key),
         InputContext::Global => map_global_key(key),
     }
 }
@@ -176,6 +178,22 @@ fn map_library_key(key: KeyEvent) -> Action {
         KeyCode::Char('r') => Action::LibraryRefresh,
         KeyCode::Char('/') => Action::LibrarySearch,
         KeyCode::Char('s') => Action::LibraryToggleSort,
+        KeyCode::Tab | KeyCode::BackTab => Action::FocusSidebar,
+        KeyCode::Esc => Action::FocusSidebar,
+        _ => Action::None,
+    }
+}
+
+fn map_benchmark_key(key: KeyEvent) -> Action {
+    match key.code {
+        KeyCode::Char('q') => Action::Quit,
+        KeyCode::Char('?') => Action::ToggleHelp,
+        KeyCode::Char('j') | KeyCode::Down => Action::NavigateDown,
+        KeyCode::Char('k') | KeyCode::Up => Action::NavigateUp,
+        KeyCode::Char(' ') => Action::BenchmarkToggleModel,
+        KeyCode::Char('a') => Action::BenchmarkSelectAll,
+        KeyCode::Char('c') => Action::BenchmarkClear,
+        KeyCode::Enter | KeyCode::Char('r') => Action::BenchmarkRun,
         KeyCode::Tab | KeyCode::BackTab => Action::FocusSidebar,
         KeyCode::Esc => Action::FocusSidebar,
         _ => Action::None,

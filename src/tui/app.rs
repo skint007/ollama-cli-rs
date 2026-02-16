@@ -122,6 +122,28 @@ pub enum LibrarySort {
     Newest,
 }
 
+pub struct BenchmarkState {
+    pub available_models: Vec<String>,
+    pub selected_models: Vec<bool>, // parallel to available_models
+    pub list_state: ListState,
+    pub rounds: u32,
+    pub results: Vec<BenchmarkResult>,
+    pub running: bool,
+    pub current_model: Option<String>,
+    pub current_round: u32,
+    pub total_rounds: u32,
+}
+
+#[derive(Debug, Clone)]
+pub struct BenchmarkResult {
+    pub name: String,
+    pub avg_speed: f64,
+    pub avg_tokens: u64,
+    pub avg_time: f64,
+    pub successful_rounds: u32,
+    pub total_rounds: u32,
+}
+
 pub struct ModelPickerState {
     pub filter: String,
     pub filtered_models: Vec<String>,
@@ -203,6 +225,7 @@ pub struct App {
     pub running: RunningState,
     pub config_state: ConfigState,
     pub library: LibraryState,
+    pub benchmark: BenchmarkState,
 
     pub status_message: Option<(String, Instant)>,
     pub connected: bool,
@@ -279,6 +302,18 @@ impl App {
                 loading: false,
                 search: String::new(),
                 sort: LibrarySort::Popular,
+            },
+
+            benchmark: BenchmarkState {
+                available_models: Vec::new(),
+                selected_models: Vec::new(),
+                list_state: ListState::default(),
+                rounds: 1,
+                results: Vec::new(),
+                running: false,
+                current_model: None,
+                current_round: 0,
+                total_rounds: 0,
             },
 
             status_message: None,
@@ -366,7 +401,7 @@ impl App {
                 Section::Running => InputContext::RunningTable,
                 Section::Config => InputContext::ConfigTable,
                 Section::Library => InputContext::LibraryTable,
-                _ => InputContext::Global,
+                Section::Benchmarks => InputContext::BenchmarkTable,
             },
         }
     }
@@ -440,6 +475,12 @@ impl App {
             Action::LibrarySearch => self.library_open_search(),
             Action::LibraryToggleSort => self.library_toggle_sort(),
 
+            // Benchmarks
+            Action::BenchmarkRun => self.benchmark_run(),
+            Action::BenchmarkToggleModel => self.benchmark_toggle_model(),
+            Action::BenchmarkSelectAll => self.benchmark_select_all(),
+            Action::BenchmarkClear => self.benchmark_clear(),
+
             // Confirmation
             Action::ConfirmYes | Action::ConfirmNo => {}
 
@@ -465,6 +506,7 @@ impl App {
                 Section::Running => self.navigate_running_table(delta),
                 Section::Config => self.navigate_config_table(delta),
                 Section::Library => self.navigate_library(delta),
+                Section::Benchmarks => self.navigate_benchmark(delta),
                 _ => {}
             },
         }
@@ -529,6 +571,9 @@ impl App {
                 if self.library.models.is_empty() && !self.library.loading {
                     self.fetch_library();
                 }
+            }
+            Section::Benchmarks => {
+                self.refresh_benchmark_models();
             }
             _ => {}
         }
@@ -1302,6 +1347,98 @@ impl App {
         self.fetch_library();
     }
 
+    // === Benchmarks ===
+
+    fn navigate_benchmark(&mut self, delta: i32) {
+        let len = self.benchmark.available_models.len();
+        if len == 0 {
+            return;
+        }
+        let current = self.benchmark.list_state.selected().unwrap_or(0) as i32;
+        let next = (current + delta).rem_euclid(len as i32) as usize;
+        self.benchmark.list_state.select(Some(next));
+    }
+
+    fn refresh_benchmark_models(&mut self) {
+        let model_names: Vec<String> = self.models.models.iter().map(|m| m.name.clone()).collect();
+        let prev_selected: Vec<String> = self
+            .benchmark
+            .available_models
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| self.benchmark.selected_models.get(*i).copied().unwrap_or(false))
+            .map(|(_, name)| name.clone())
+            .collect();
+
+        self.benchmark.selected_models = model_names
+            .iter()
+            .map(|name| prev_selected.contains(name))
+            .collect();
+        self.benchmark.available_models = model_names;
+
+        if self.benchmark.list_state.selected().is_none()
+            && !self.benchmark.available_models.is_empty()
+        {
+            self.benchmark.list_state.select(Some(0));
+        }
+    }
+
+    fn benchmark_toggle_model(&mut self) {
+        if let Some(idx) = self.benchmark.list_state.selected() {
+            if let Some(sel) = self.benchmark.selected_models.get_mut(idx) {
+                *sel = !*sel;
+            }
+        }
+    }
+
+    fn benchmark_select_all(&mut self) {
+        for sel in &mut self.benchmark.selected_models {
+            *sel = true;
+        }
+    }
+
+    fn benchmark_clear(&mut self) {
+        for sel in &mut self.benchmark.selected_models {
+            *sel = false;
+        }
+        self.benchmark.results.clear();
+        self.benchmark.running = false;
+        self.benchmark.current_model = None;
+    }
+
+    fn benchmark_run(&mut self) {
+        if self.benchmark.running {
+            return;
+        }
+
+        let selected: Vec<String> = self
+            .benchmark
+            .available_models
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| self.benchmark.selected_models.get(*i).copied().unwrap_or(false))
+            .map(|(_, name)| name.clone())
+            .collect();
+
+        if selected.is_empty() {
+            self.status_message =
+                Some(("No models selected. Press Space to toggle.".to_string(), Instant::now()));
+            return;
+        }
+
+        self.benchmark.running = true;
+        self.benchmark.results.clear();
+        self.benchmark.current_model = None;
+
+        let rounds = self.benchmark.rounds;
+        let client = self.client.clone();
+        let tx = self.api_tx.clone();
+
+        tokio::spawn(async move {
+            run_benchmarks(client, tx, selected, rounds).await;
+        });
+    }
+
     // === Chat ===
 
     pub fn send_chat_message(&mut self) {
@@ -1509,6 +1646,31 @@ impl App {
                 self.status_message =
                     Some((format!("Library error: {}", err), Instant::now()));
             }
+            ApiEvent::BenchmarkProgress {
+                model,
+                round,
+                total_rounds,
+            } => {
+                self.benchmark.current_model = Some(model);
+                self.benchmark.current_round = round;
+                self.benchmark.total_rounds = total_rounds;
+            }
+            ApiEvent::BenchmarkModelDone(result) => {
+                self.benchmark.results.push(result);
+                self.benchmark.current_model = None;
+            }
+            ApiEvent::BenchmarkComplete => {
+                self.benchmark.running = false;
+                self.benchmark.current_model = None;
+                self.status_message =
+                    Some(("Benchmark complete".to_string(), Instant::now()));
+            }
+            ApiEvent::BenchmarkError(err) => {
+                self.benchmark.running = false;
+                self.benchmark.current_model = None;
+                self.status_message =
+                    Some((format!("Benchmark error: {}", err), Instant::now()));
+            }
             ApiEvent::ConnectionStatus(connected) => {
                 self.connected = connected;
             }
@@ -1629,4 +1791,103 @@ async fn fetch_library_models(sort: LibrarySort) -> anyhow::Result<Vec<LibraryMo
     }
 
     Ok(models)
+}
+
+/// Run benchmarks for selected models, sending progress via channel
+async fn run_benchmarks(
+    client: OllamaClient,
+    tx: mpsc::UnboundedSender<ApiEvent>,
+    models: Vec<String>,
+    rounds: u32,
+) {
+    use crate::format::{nanos_to_secs, tokens_per_sec};
+
+    let prompt = "Explain the concept of recursion in programming with a simple example.";
+
+    for model in &models {
+        let mut total_tokens: u64 = 0;
+        let mut total_speed: f64 = 0.0;
+        let mut total_time: f64 = 0.0;
+        let mut successful_rounds: u32 = 0;
+
+        for round in 1..=rounds {
+            let _ = tx.send(ApiEvent::BenchmarkProgress {
+                model: model.clone(),
+                round,
+                total_rounds: rounds,
+            });
+
+            let request = GenerateRequest {
+                model: model.clone(),
+                prompt: prompt.to_string(),
+                stream: false,
+                ..Default::default()
+            };
+
+            match client
+                .post::<_, crate::api::types::GenerateResponse>("/api/generate", &request)
+                .await
+            {
+                Ok(response) => {
+                    if let (Some(count), Some(eval_dur)) =
+                        (response.eval_count, response.eval_duration)
+                    {
+                        if count > 0 && eval_dur > 0 {
+                            let speed = tokens_per_sec(count, eval_dur);
+                            let time_sec = response
+                                .total_duration
+                                .map(nanos_to_secs)
+                                .unwrap_or(0.0);
+
+                            total_tokens += count;
+                            total_speed += speed;
+                            total_time += time_sec;
+                            successful_rounds += 1;
+                        }
+                    }
+                }
+                Err(e) => {
+                    let _ = tx.send(ApiEvent::BenchmarkError(format!(
+                        "Model '{}' round {} failed: {}",
+                        model, round, e
+                    )));
+                    return;
+                }
+            }
+        }
+
+        let result = if successful_rounds > 0 {
+            BenchmarkResult {
+                name: model.clone(),
+                avg_speed: total_speed / successful_rounds as f64,
+                avg_tokens: total_tokens / successful_rounds as u64,
+                avg_time: total_time / successful_rounds as f64,
+                successful_rounds,
+                total_rounds: rounds,
+            }
+        } else {
+            BenchmarkResult {
+                name: model.clone(),
+                avg_speed: 0.0,
+                avg_tokens: 0,
+                avg_time: 0.0,
+                successful_rounds: 0,
+                total_rounds: rounds,
+            }
+        };
+
+        let _ = tx.send(ApiEvent::BenchmarkModelDone(result));
+
+        // Unload model between tests
+        let unload_req = GenerateRequest {
+            model: model.clone(),
+            prompt: String::new(),
+            stream: false,
+            keep_alive: Some(0),
+            ..Default::default()
+        };
+        let _ = client.post_raw("/api/generate", &unload_req).await;
+    }
+
+    let _ = tx.send(ApiEvent::BenchmarkComplete);
 }

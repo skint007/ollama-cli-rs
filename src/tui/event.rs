@@ -5,7 +5,7 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 
 use crate::api::types::{ModelInfo, RunningModel, ShowResponse};
-use crate::tui::app::LibraryModel;
+use crate::tui::app::{BenchmarkResult, LibraryModel};
 
 #[derive(Debug)]
 pub enum Event {
@@ -45,6 +45,14 @@ pub enum ApiEvent {
     PullError(String),
     LibraryLoaded(Vec<LibraryModel>),
     LibraryError(String),
+    BenchmarkProgress {
+        model: String,
+        round: u32,
+        total_rounds: u32,
+    },
+    BenchmarkModelDone(BenchmarkResult),
+    BenchmarkComplete,
+    BenchmarkError(String),
     ConnectionStatus(bool),
     Error(String),
 }

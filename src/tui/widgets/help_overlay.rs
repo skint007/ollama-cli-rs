@@ -13,7 +13,7 @@ pub fn render(frame: &mut Frame, area: Rect, _app: &App) {
 
     // Center the popup
     let popup_width = 56.min(area.width.saturating_sub(4));
-    let popup_height = 46.min(area.height.saturating_sub(4));
+    let popup_height = 54.min(area.height.saturating_sub(4));
     let x = (area.width.saturating_sub(popup_width)) / 2 + area.x;
     let y = (area.height.saturating_sub(popup_height)) / 2 + area.y;
     let popup_area = Rect::new(x, y, popup_width, popup_height);
@@ -72,6 +72,13 @@ pub fn render(frame: &mut Frame, area: Rect, _app: &App) {
         Line::from("  /           Search/filter"),
         Line::from("  s           Toggle sort (popular/newest)"),
         Line::from("  r           Refresh list"),
+        Line::from(""),
+        Line::from(Span::styled("Benchmarks", t.heading)),
+        Line::from("  j/k         Navigate models"),
+        Line::from("  Space       Toggle model selection"),
+        Line::from("  a           Select all models"),
+        Line::from("  c           Clear selection & results"),
+        Line::from("  Enter/r     Run benchmark"),
         Line::from(""),
         Line::from(Span::styled("Config", t.heading)),
         Line::from("  j/k         Navigate profiles"),

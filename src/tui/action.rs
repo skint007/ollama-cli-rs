@@ -46,6 +46,12 @@ pub enum Action {
     LibrarySearch,
     LibraryToggleSort,
 
+    // Benchmarks
+    BenchmarkRun,
+    BenchmarkToggleModel,
+    BenchmarkSelectAll,
+    BenchmarkClear,
+
     // Confirmation dialog
     ConfirmYes,
     ConfirmNo,
