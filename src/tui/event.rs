@@ -5,6 +5,7 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 
 use crate::api::types::{ModelInfo, RunningModel, ShowResponse};
+use crate::tui::app::LibraryModel;
 
 #[derive(Debug)]
 pub enum Event {
@@ -42,6 +43,8 @@ pub enum ApiEvent {
     },
     PullComplete(String),
     PullError(String),
+    LibraryLoaded(Vec<LibraryModel>),
+    LibraryError(String),
     ConnectionStatus(bool),
     Error(String),
 }

@@ -99,6 +99,29 @@ pub struct ConfigState {
     pub list_state: ListState,
 }
 
+#[derive(Debug, Clone)]
+pub struct LibraryModel {
+    pub name: String,
+    pub description: String,
+    pub tags: Vec<String>,
+    pub capabilities: Vec<String>,
+}
+
+pub struct LibraryState {
+    pub models: Vec<LibraryModel>,
+    pub filtered: Vec<usize>, // indices into models
+    pub list_state: ListState,
+    pub loading: bool,
+    pub search: String,
+    pub sort: LibrarySort,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LibrarySort {
+    Popular,
+    Newest,
+}
+
 pub struct ModelPickerState {
     pub filter: String,
     pub filtered_models: Vec<String>,
@@ -140,6 +163,7 @@ pub enum TextInputAction {
     CopyModel(String),
     ConfigAddName,
     ConfigAddUrl(String), // profile name, now asking for URL
+    LibrarySearch,
 }
 
 /// State for an active pull operation
@@ -178,6 +202,7 @@ pub struct App {
     pub models: ModelsState,
     pub running: RunningState,
     pub config_state: ConfigState,
+    pub library: LibraryState,
 
     pub status_message: Option<(String, Instant)>,
     pub connected: bool,
@@ -245,6 +270,15 @@ impl App {
             config_state: ConfigState {
                 profiles: Vec::new(),
                 list_state: ListState::default(),
+            },
+
+            library: LibraryState {
+                models: Vec::new(),
+                filtered: Vec::new(),
+                list_state: ListState::default(),
+                loading: false,
+                search: String::new(),
+                sort: LibrarySort::Popular,
             },
 
             status_message: None,
@@ -331,6 +365,7 @@ impl App {
                 Section::Models => InputContext::ModelsTable,
                 Section::Running => InputContext::RunningTable,
                 Section::Config => InputContext::ConfigTable,
+                Section::Library => InputContext::LibraryTable,
                 _ => InputContext::Global,
             },
         }
@@ -399,6 +434,12 @@ impl App {
             Action::ConfigSwitchProfile => self.config_switch_profile(),
             Action::ConfigTestConnection => self.config_test_connection(),
 
+            // Library
+            Action::LibraryRefresh => self.fetch_library(),
+            Action::LibraryPull => self.library_pull_selected(),
+            Action::LibrarySearch => self.library_open_search(),
+            Action::LibraryToggleSort => self.library_toggle_sort(),
+
             // Confirmation
             Action::ConfirmYes | Action::ConfirmNo => {}
 
@@ -423,6 +464,7 @@ impl App {
                 Section::Models => self.navigate_models_table(delta),
                 Section::Running => self.navigate_running_table(delta),
                 Section::Config => self.navigate_config_table(delta),
+                Section::Library => self.navigate_library(delta),
                 _ => {}
             },
         }
@@ -483,6 +525,11 @@ impl App {
             Section::Models => self.fetch_models(),
             Section::Running => self.fetch_running(),
             Section::Config => self.refresh_config_profiles(),
+            Section::Library => {
+                if self.library.models.is_empty() && !self.library.loading {
+                    self.fetch_library();
+                }
+            }
             _ => {}
         }
     }
@@ -694,6 +741,10 @@ impl App {
             }
             TextInputAction::ConfigAddUrl(name) => {
                 self.config_save_profile(&name, &input);
+            }
+            TextInputAction::LibrarySearch => {
+                self.library.search = input;
+                self.library_apply_filter();
             }
         }
     }
@@ -1163,6 +1214,94 @@ impl App {
         self.status_message = Some((format!("Testing '{}'...", name_display), Instant::now()));
     }
 
+    // === Library ===
+
+    fn navigate_library(&mut self, delta: i32) {
+        let len = self.library.filtered.len();
+        if len == 0 {
+            return;
+        }
+        let current = self.library.list_state.selected().unwrap_or(0) as i32;
+        let next = (current + delta).rem_euclid(len as i32) as usize;
+        self.library.list_state.select(Some(next));
+    }
+
+    fn fetch_library(&mut self) {
+        self.library.loading = true;
+        let tx = self.api_tx.clone();
+        let sort = self.library.sort;
+
+        tokio::spawn(async move {
+            match fetch_library_models(sort).await {
+                Ok(models) => {
+                    let _ = tx.send(ApiEvent::LibraryLoaded(models));
+                }
+                Err(e) => {
+                    let _ = tx.send(ApiEvent::LibraryError(format!("{}", e)));
+                }
+            }
+        });
+    }
+
+    fn library_apply_filter(&mut self) {
+        let search = self.library.search.to_lowercase();
+        self.library.filtered = self
+            .library
+            .models
+            .iter()
+            .enumerate()
+            .filter(|(_, m)| {
+                if search.is_empty() {
+                    return true;
+                }
+                m.name.to_lowercase().contains(&search)
+                    || m.description.to_lowercase().contains(&search)
+                    || m.tags.iter().any(|t| t.to_lowercase().contains(&search))
+                    || m.capabilities
+                        .iter()
+                        .any(|c| c.to_lowercase().contains(&search))
+            })
+            .map(|(i, _)| i)
+            .collect();
+        // Reset selection
+        if !self.library.filtered.is_empty() {
+            self.library.list_state.select(Some(0));
+        } else {
+            self.library.list_state.select(None);
+        }
+    }
+
+    fn library_pull_selected(&mut self) {
+        let idx = self.library.list_state.selected();
+        let model_name = idx
+            .and_then(|i| self.library.filtered.get(i).copied())
+            .and_then(|i| self.library.models.get(i))
+            .map(|m| m.name.clone());
+
+        if let Some(name) = model_name {
+            self.pull_model(&name);
+        } else {
+            self.status_message = Some(("No model selected".to_string(), Instant::now()));
+        }
+    }
+
+    fn library_open_search(&mut self) {
+        self.text_input = Some(TextInputState {
+            title: "Search Library".to_string(),
+            prompt: "Filter models:".to_string(),
+            input: self.library.search.clone(),
+            on_submit: TextInputAction::LibrarySearch,
+        });
+    }
+
+    fn library_toggle_sort(&mut self) {
+        self.library.sort = match self.library.sort {
+            LibrarySort::Popular => LibrarySort::Newest,
+            LibrarySort::Newest => LibrarySort::Popular,
+        };
+        self.fetch_library();
+    }
+
     // === Chat ===
 
     pub fn send_chat_message(&mut self) {
@@ -1360,6 +1499,16 @@ impl App {
                 self.status_message =
                     Some((format!("Pull failed: {}", err), Instant::now()));
             }
+            ApiEvent::LibraryLoaded(models) => {
+                self.library.models = models;
+                self.library.loading = false;
+                self.library_apply_filter();
+            }
+            ApiEvent::LibraryError(err) => {
+                self.library.loading = false;
+                self.status_message =
+                    Some((format!("Library error: {}", err), Instant::now()));
+            }
             ApiEvent::ConnectionStatus(connected) => {
                 self.connected = connected;
             }
@@ -1417,4 +1566,67 @@ impl App {
             let _ = tx.send(ApiEvent::ConnectionStatus(connected));
         });
     }
+}
+
+/// Fetch library models from ollama.com by scraping the HTML
+async fn fetch_library_models(sort: LibrarySort) -> anyhow::Result<Vec<LibraryModel>> {
+    use scraper::{Html, Selector};
+
+    let url = match sort {
+        LibrarySort::Popular => "https://ollama.com/library".to_string(),
+        LibrarySort::Newest => "https://ollama.com/library?sort=newest".to_string(),
+    };
+
+    let html_text = reqwest::get(&url).await?.text().await?;
+    let document = Html::parse_document(&html_text);
+
+    let link_selector = Selector::parse("a[href^='/library/']").expect("Invalid CSS selector");
+    let p_selector = Selector::parse("p").unwrap();
+    let tag_selector = Selector::parse("[x-test-size]").unwrap();
+    let cap_selector = Selector::parse("[x-test-capability]").unwrap();
+
+    let mut models = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+
+    for element in document.select(&link_selector) {
+        let href = element.value().attr("href").unwrap_or_default();
+        let model_name = href.strip_prefix("/library/").unwrap_or(href);
+
+        if model_name.is_empty() || model_name.contains('/') {
+            continue;
+        }
+
+        if !seen.insert(model_name.to_string()) {
+            continue;
+        }
+
+        let description = element
+            .select(&p_selector)
+            .next()
+            .map(|p| p.text().collect::<String>())
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+
+        let tags: Vec<String> = element
+            .select(&tag_selector)
+            .map(|el| el.text().collect::<String>().trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+
+        let capabilities: Vec<String> = element
+            .select(&cap_selector)
+            .map(|el| el.text().collect::<String>().trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+
+        models.push(LibraryModel {
+            name: model_name.to_string(),
+            description,
+            tags,
+            capabilities,
+        });
+    }
+
+    Ok(models)
 }

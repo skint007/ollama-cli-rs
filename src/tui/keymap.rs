@@ -12,6 +12,7 @@ pub enum InputContext {
     ModelsTable,
     RunningTable,
     ConfigTable,
+    LibraryTable,
 }
 
 pub fn map_key_event(key: KeyEvent, context: &InputContext) -> Action {
@@ -30,6 +31,7 @@ pub fn map_key_event(key: KeyEvent, context: &InputContext) -> Action {
         InputContext::ModelsTable => map_models_key(key),
         InputContext::RunningTable => map_running_key(key),
         InputContext::ConfigTable => map_config_key(key),
+        InputContext::LibraryTable => map_library_key(key),
         InputContext::Global => map_global_key(key),
     }
 }
@@ -158,6 +160,22 @@ fn map_config_key(key: KeyEvent) -> Action {
         KeyCode::Char('a') => Action::ConfigAddProfile,
         KeyCode::Char('d') => Action::ConfigRemoveProfile,
         KeyCode::Char('t') => Action::ConfigTestConnection,
+        KeyCode::Tab | KeyCode::BackTab => Action::FocusSidebar,
+        KeyCode::Esc => Action::FocusSidebar,
+        _ => Action::None,
+    }
+}
+
+fn map_library_key(key: KeyEvent) -> Action {
+    match key.code {
+        KeyCode::Char('q') => Action::Quit,
+        KeyCode::Char('?') => Action::ToggleHelp,
+        KeyCode::Char('j') | KeyCode::Down => Action::NavigateDown,
+        KeyCode::Char('k') | KeyCode::Up => Action::NavigateUp,
+        KeyCode::Char('p') | KeyCode::Enter => Action::LibraryPull,
+        KeyCode::Char('r') => Action::LibraryRefresh,
+        KeyCode::Char('/') => Action::LibrarySearch,
+        KeyCode::Char('s') => Action::LibraryToggleSort,
         KeyCode::Tab | KeyCode::BackTab => Action::FocusSidebar,
         KeyCode::Esc => Action::FocusSidebar,
         _ => Action::None,

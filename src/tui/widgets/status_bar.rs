@@ -100,6 +100,9 @@ fn context_hints(app: &App) -> String {
                 " j/k=Nav  Enter=Detail  p=Pull  c=Copy  d=Delete  ?=Help ".to_string()
             }
             Section::Running => " j/k=Nav  u=Unload  r=Refresh  ?=Help ".to_string(),
+            Section::Library => {
+                " j/k=Nav  p=Pull  /=Search  s=Sort  r=Refresh  ?=Help ".to_string()
+            }
             Section::Config => {
                 " j/k=Nav  Enter=Switch  a=Add  d=Remove  t=Test  ?=Help ".to_string()
             }

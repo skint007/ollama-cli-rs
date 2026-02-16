@@ -40,6 +40,12 @@ pub enum Action {
     ConfigSwitchProfile,
     ConfigTestConnection,
 
+    // Library
+    LibraryRefresh,
+    LibraryPull,
+    LibrarySearch,
+    LibraryToggleSort,
+
     // Confirmation dialog
     ConfirmYes,
     ConfirmNo,

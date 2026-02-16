@@ -13,7 +13,7 @@ pub fn render(frame: &mut Frame, area: Rect, _app: &App) {
 
     // Center the popup
     let popup_width = 56.min(area.width.saturating_sub(4));
-    let popup_height = 40.min(area.height.saturating_sub(4));
+    let popup_height = 46.min(area.height.saturating_sub(4));
     let x = (area.width.saturating_sub(popup_width)) / 2 + area.x;
     let y = (area.height.saturating_sub(popup_height)) / 2 + area.y;
     let popup_area = Rect::new(x, y, popup_width, popup_height);
@@ -64,6 +64,13 @@ pub fn render(frame: &mut Frame, area: Rect, _app: &App) {
         Line::from(Span::styled("Running", t.heading)),
         Line::from("  j/k         Navigate rows"),
         Line::from("  u           Unload from memory"),
+        Line::from("  r           Refresh list"),
+        Line::from(""),
+        Line::from(Span::styled("Library", t.heading)),
+        Line::from("  j/k         Navigate models"),
+        Line::from("  Enter/p     Pull selected model"),
+        Line::from("  /           Search/filter"),
+        Line::from("  s           Toggle sort (popular/newest)"),
         Line::from("  r           Refresh list"),
         Line::from(""),
         Line::from(Span::styled("Config", t.heading)),
