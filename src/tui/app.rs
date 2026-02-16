@@ -3,9 +3,11 @@ use std::time::Instant;
 use tokio::sync::mpsc;
 use tui_textarea::TextArea;
 
+use std::collections::HashMap;
+
 use crate::api::types::{
-    ChatMessage, ChatRequest, ChatResponse, DeleteRequest, GenerateRequest, ModelInfo, PsResponse,
-    RunningModel, ShowRequest, ShowResponse, TagsResponse,
+    ChatMessage, ChatRequest, ChatResponse, CopyRequest, DeleteRequest, GenerateRequest,
+    ModelInfo, ProgressResponse, PsResponse, RunningModel, ShowRequest, ShowResponse, TagsResponse,
 };
 use crate::client::OllamaClient;
 use crate::config::Config;
@@ -56,6 +58,12 @@ pub enum Focus {
     MainPanel,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChatFocus {
+    Input,
+    Messages,
+}
+
 pub struct ChatState {
     pub messages: Vec<ChatMessage>,
     pub current_model: Option<String>,
@@ -65,6 +73,7 @@ pub struct ChatState {
     pub streaming_buffer: String,
     pub last_stats: Option<ChatStats>,
     pub auto_scroll: bool,
+    pub chat_focus: ChatFocus,
 }
 
 pub struct ChatStats {
@@ -111,6 +120,34 @@ pub enum ConfirmAction {
     UnloadModel(String),
 }
 
+/// State for a text input dialog overlay
+pub struct TextInputState {
+    pub title: String,
+    pub prompt: String,
+    pub input: String,
+    pub on_submit: TextInputAction,
+}
+
+#[derive(Clone)]
+pub enum TextInputAction {
+    PullModel,
+    CopyModel(String), // source model name
+}
+
+/// State for an active pull operation
+pub struct PullState {
+    pub model_name: String,
+    pub status: String,
+    pub layers: HashMap<String, PullLayerProgress>,
+    pub layer_order: Vec<String>,
+    pub is_complete: bool,
+}
+
+pub struct PullLayerProgress {
+    pub total: u64,
+    pub completed: u64,
+}
+
 pub struct App {
     pub client: OllamaClient,
     pub config: Config,
@@ -126,6 +163,8 @@ pub struct App {
     pub model_picker: ModelPickerState,
     pub model_detail: Option<ModelDetailState>,
     pub confirm: Option<ConfirmState>,
+    pub text_input: Option<TextInputState>,
+    pub pull: Option<PullState>,
 
     pub chat: ChatState,
     pub models: ModelsState,
@@ -167,6 +206,8 @@ impl App {
             },
             model_detail: None,
             confirm: None,
+            text_input: None,
+            pull: None,
 
             chat: ChatState {
                 messages: Vec::new(),
@@ -177,6 +218,7 @@ impl App {
                 streaming_buffer: String::new(),
                 last_stats: None,
                 auto_scroll: true,
+                chat_focus: ChatFocus::Input,
             },
 
             models: ModelsState {
@@ -234,6 +276,16 @@ impl App {
             return self.handle_confirm_key(key);
         }
 
+        // Text input overlay takes priority
+        if self.text_input.is_some() {
+            return self.handle_text_input_key(key);
+        }
+
+        // Pull progress overlay: only Esc to dismiss when complete
+        if self.pull.is_some() {
+            return self.handle_pull_overlay_key(key);
+        }
+
         // Model detail overlay takes priority
         if self.model_detail.is_some() {
             return self.handle_model_detail_key(key);
@@ -256,7 +308,7 @@ impl App {
             Focus::Sidebar => InputContext::Sidebar,
             Focus::MainPanel => match self.active_section {
                 Section::Chat => {
-                    if self.chat.is_streaming {
+                    if self.chat.is_streaming || self.chat.chat_focus == ChatFocus::Messages {
                         InputContext::ChatMessages
                     } else {
                         InputContext::ChatInput
@@ -273,7 +325,10 @@ impl App {
         match action {
             Action::Quit => self.should_quit = true,
             Action::ToggleHelp => self.show_help = !self.show_help,
-            Action::FocusSidebar => self.focus = Focus::Sidebar,
+            Action::FocusSidebar => {
+                self.focus = Focus::Sidebar;
+                self.chat.chat_focus = ChatFocus::Input;
+            }
             Action::FocusMainPanel => self.focus = Focus::MainPanel,
             Action::NavigateUp => self.navigate(-1),
             Action::NavigateDown => self.navigate(1),
@@ -306,12 +361,18 @@ impl App {
             }
             Action::FocusChatInput => {
                 self.focus = Focus::MainPanel;
+                self.chat.chat_focus = ChatFocus::Input;
+            }
+            Action::FocusChatMessages => {
+                self.chat.chat_focus = ChatFocus::Messages;
             }
 
             // Models
             Action::RefreshModels => self.fetch_models(),
             Action::ShowModelDetail => self.show_model_detail(),
             Action::DeleteModel => self.confirm_delete_model(),
+            Action::PullModel => self.open_pull_input(),
+            Action::CopyModel => self.open_copy_input(),
 
             // Running
             Action::RefreshRunning => self.fetch_running(),
@@ -536,6 +597,180 @@ impl App {
             }
             _ => Action::None,
         }
+    }
+
+    fn handle_text_input_key(&mut self, key: crossterm::event::KeyEvent) -> Action {
+        use crossterm::event::KeyCode;
+
+        match key.code {
+            KeyCode::Esc => {
+                self.text_input = None;
+                Action::CloseOverlay
+            }
+            KeyCode::Enter => {
+                if let Some(state) = self.text_input.take() {
+                    let input = state.input.trim().to_string();
+                    if !input.is_empty() {
+                        self.execute_text_input(state.on_submit, input);
+                    }
+                }
+                Action::None
+            }
+            KeyCode::Backspace => {
+                if let Some(state) = &mut self.text_input {
+                    state.input.pop();
+                }
+                Action::None
+            }
+            KeyCode::Char(c) => {
+                if let Some(state) = &mut self.text_input {
+                    state.input.push(c);
+                }
+                Action::None
+            }
+            _ => Action::None,
+        }
+    }
+
+    fn handle_pull_overlay_key(&mut self, key: crossterm::event::KeyEvent) -> Action {
+        use crossterm::event::KeyCode;
+
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => {
+                if self.pull.as_ref().is_some_and(|p| p.is_complete) {
+                    self.pull = None;
+                }
+                Action::CloseOverlay
+            }
+            _ => Action::None,
+        }
+    }
+
+    fn execute_text_input(&mut self, action: TextInputAction, input: String) {
+        match action {
+            TextInputAction::PullModel => self.pull_model(&input),
+            TextInputAction::CopyModel(source) => self.copy_model(&source, &input),
+        }
+    }
+
+    fn open_pull_input(&mut self) {
+        self.text_input = Some(TextInputState {
+            title: "Pull Model".to_string(),
+            prompt: "Enter model name (e.g. llama3.2, mistral:7b):".to_string(),
+            input: String::new(),
+            on_submit: TextInputAction::PullModel,
+        });
+    }
+
+    fn open_copy_input(&mut self) {
+        let name = if let Some(idx) = self.models.table_state.selected() {
+            self.models.models.get(idx).map(|m| m.name.clone())
+        } else {
+            None
+        };
+
+        let Some(name) = name else {
+            self.status_message = Some(("No model selected".to_string(), Instant::now()));
+            return;
+        };
+
+        self.text_input = Some(TextInputState {
+            title: "Copy Model".to_string(),
+            prompt: format!("New name for copy of '{}':", name),
+            input: String::new(),
+            on_submit: TextInputAction::CopyModel(name),
+        });
+    }
+
+    fn pull_model(&mut self, name: &str) {
+        let model_name = name.to_string();
+
+        self.pull = Some(PullState {
+            model_name: model_name.clone(),
+            status: "Starting pull...".to_string(),
+            layers: HashMap::new(),
+            layer_order: Vec::new(),
+            is_complete: false,
+        });
+
+        let client = self.client.clone();
+        let tx = self.api_tx.clone();
+        let name = model_name.clone();
+
+        tokio::spawn(async move {
+            let body = serde_json::json!({
+                "name": name,
+                "stream": true
+            });
+
+            match client.post_stream("/api/pull", &body).await {
+                Ok(mut stream) => {
+                    while let Ok(Some(chunk)) = stream.next_json::<ProgressResponse>().await {
+                        if let Some(err) = &chunk.error {
+                            let _ = tx.send(ApiEvent::PullError(err.clone()));
+                            return;
+                        }
+
+                        let status = chunk.status.clone().unwrap_or_default();
+                        let _ = tx.send(ApiEvent::PullProgress {
+                            status: status.clone(),
+                            digest: chunk.digest,
+                            total: chunk.total,
+                            completed: chunk.completed,
+                        });
+
+                        if status == "success" {
+                            let _ = tx.send(ApiEvent::PullComplete(name));
+                            return;
+                        }
+                    }
+                    // Stream ended without explicit success
+                    let _ = tx.send(ApiEvent::PullComplete(name));
+                }
+                Err(e) => {
+                    let _ = tx.send(ApiEvent::PullError(e.to_string()));
+                }
+            }
+        });
+    }
+
+    fn copy_model(&mut self, source: &str, destination: &str) {
+        let client = self.client.clone();
+        let tx = self.api_tx.clone();
+        let src = source.to_string();
+        let dst = destination.to_string();
+
+        tokio::spawn(async move {
+            let request = CopyRequest {
+                source: src.clone(),
+                destination: dst.clone(),
+            };
+            match client.post_raw("/api/copy", &request).await {
+                Ok(resp) => {
+                    if resp.status().is_success() {
+                        let _ = tx.send(ApiEvent::ModelCopied {
+                            source: src,
+                            destination: dst,
+                        });
+                    } else {
+                        let status = resp.status();
+                        let body = resp.text().await.unwrap_or_default();
+                        let _ = tx.send(ApiEvent::Error(format!(
+                            "Failed to copy model (HTTP {}): {}",
+                            status, body
+                        )));
+                    }
+                }
+                Err(e) => {
+                    let _ = tx.send(ApiEvent::Error(format!("Failed to copy model: {}", e)));
+                }
+            }
+        });
+
+        self.status_message = Some((
+            format!("Copying {} -> {}...", source, destination),
+            Instant::now(),
+        ));
     }
 
     // === Model actions ===
@@ -848,6 +1083,51 @@ impl App {
                 self.status_message =
                     Some((format!("Model '{}' unloaded", name), Instant::now()));
                 self.fetch_running();
+            }
+            ApiEvent::ModelCopied {
+                source,
+                destination,
+            } => {
+                self.status_message = Some((
+                    format!("Copied '{}' -> '{}'", source, destination),
+                    Instant::now(),
+                ));
+                self.fetch_models();
+            }
+            ApiEvent::PullProgress {
+                status,
+                digest,
+                total,
+                completed,
+            } => {
+                if let Some(pull) = &mut self.pull {
+                    pull.status = status;
+                    if let (Some(digest), Some(total), Some(completed)) = (digest, total, completed)
+                    {
+                        if !pull.layers.contains_key(&digest) {
+                            pull.layer_order.push(digest.clone());
+                        }
+                        pull.layers
+                            .insert(digest, PullLayerProgress { total, completed });
+                    }
+                }
+            }
+            ApiEvent::PullComplete(name) => {
+                if let Some(pull) = &mut self.pull {
+                    pull.status = "success".to_string();
+                    pull.is_complete = true;
+                }
+                self.status_message =
+                    Some((format!("Model '{}' pulled successfully", name), Instant::now()));
+                self.fetch_models();
+            }
+            ApiEvent::PullError(err) => {
+                if let Some(pull) = &mut self.pull {
+                    pull.status = format!("Error: {}", err);
+                    pull.is_complete = true;
+                }
+                self.status_message =
+                    Some((format!("Pull failed: {}", err), Instant::now()));
             }
             ApiEvent::ConnectionStatus(connected) => {
                 self.connected = connected;

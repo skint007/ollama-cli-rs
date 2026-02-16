@@ -30,6 +30,18 @@ pub enum ApiEvent {
     },
     ModelDeleted(String),
     ModelUnloaded(String),
+    ModelCopied {
+        source: String,
+        destination: String,
+    },
+    PullProgress {
+        status: String,
+        digest: Option<String>,
+        total: Option<u64>,
+        completed: Option<u64>,
+    },
+    PullComplete(String),
+    PullError(String),
     ConnectionStatus(bool),
     Error(String),
 }

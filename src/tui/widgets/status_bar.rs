@@ -74,6 +74,15 @@ fn context_hints(app: &App) -> String {
     if app.confirm.is_some() {
         return " y=Yes  n/Esc=Cancel ".to_string();
     }
+    if app.text_input.is_some() {
+        return " Enter=Submit  Esc=Cancel ".to_string();
+    }
+    if app.pull.is_some() {
+        if app.pull.as_ref().is_some_and(|p| p.is_complete) {
+            return " Esc=Close ".to_string();
+        }
+        return " Pulling... ".to_string();
+    }
     if app.model_detail.is_some() {
         return " j/k=Scroll  Esc=Close ".to_string();
     }
@@ -85,14 +94,17 @@ fn context_hints(app: &App) -> String {
         Focus::Sidebar => " j/k=Nav  Enter=Select  ?=Help ".to_string(),
         Focus::MainPanel => match app.active_section {
             Section::Chat => {
+                use crate::tui::app::ChatFocus;
                 if app.chat.is_streaming {
                     " j/k=Scroll  G=Bottom  ?=Help ".to_string()
+                } else if app.chat.chat_focus == ChatFocus::Messages {
+                    " j/k=Scroll  i=Input  Esc=Sidebar  ?=Help ".to_string()
                 } else {
-                    " Enter=Send  Ctrl+M=Model  ?=Help ".to_string()
+                    " Enter=Send  Alt+M=Model  Esc=Scroll  ?=Help ".to_string()
                 }
             }
             Section::Models => {
-                " j/k=Nav  Enter=Detail  d=Delete  r=Refresh  ?=Help ".to_string()
+                " j/k=Nav  Enter=Detail  p=Pull  c=Copy  d=Delete  ?=Help ".to_string()
             }
             Section::Running => " j/k=Nav  u=Unload  r=Refresh  ?=Help ".to_string(),
             _ => " ?=Help  q=Quit  Tab=Nav ".to_string(),

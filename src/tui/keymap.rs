@@ -75,10 +75,10 @@ fn map_chat_input_key(key: KeyEvent) -> Action {
             code: KeyCode::Char('m'),
             modifiers,
             ..
-        } if modifiers.contains(KeyModifiers::CONTROL) => Action::ToggleModelPicker,
+        } if modifiers.contains(KeyModifiers::ALT) => Action::ToggleModelPicker,
         KeyEvent {
             code: KeyCode::Esc, ..
-        } => Action::FocusSidebar,
+        } => Action::FocusChatMessages,
         KeyEvent {
             code: KeyCode::Char('?'),
             modifiers,
@@ -108,7 +108,7 @@ fn map_chat_messages_key(key: KeyEvent) -> Action {
         KeyCode::Char('n') => Action::NewChat,
         KeyCode::Tab | KeyCode::BackTab => Action::FocusSidebar,
         KeyCode::Esc => Action::FocusSidebar,
-        KeyCode::Char('m') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+        KeyCode::Char('m') if key.modifiers.contains(KeyModifiers::ALT) => {
             Action::ToggleModelPicker
         }
         _ => Action::None,
@@ -124,6 +124,8 @@ fn map_models_key(key: KeyEvent) -> Action {
         KeyCode::Enter => Action::ShowModelDetail,
         KeyCode::Char('r') => Action::RefreshModels,
         KeyCode::Char('d') => Action::DeleteModel,
+        KeyCode::Char('p') => Action::PullModel,
+        KeyCode::Char('c') => Action::CopyModel,
         KeyCode::Tab | KeyCode::BackTab => Action::FocusSidebar,
         KeyCode::Esc => Action::FocusSidebar,
         _ => Action::None,

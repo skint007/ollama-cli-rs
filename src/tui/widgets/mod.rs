@@ -4,5 +4,7 @@ pub mod input_box;
 pub mod message_list;
 pub mod model_detail;
 pub mod model_picker;
+pub mod pull_progress;
 pub mod sidebar;
 pub mod status_bar;
+pub mod text_input;

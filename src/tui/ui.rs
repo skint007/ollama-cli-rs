@@ -5,7 +5,10 @@ use ratatui::{
 
 use super::app::{App, Section};
 use super::views;
-use super::widgets::{confirm_dialog, help_overlay, model_detail, model_picker, sidebar, status_bar};
+use super::widgets::{
+    confirm_dialog, help_overlay, model_detail, model_picker, pull_progress, sidebar, status_bar,
+    text_input,
+};
 
 pub fn render(frame: &mut Frame, app: &mut App) {
     let area = frame.area();
@@ -47,6 +50,14 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
     if app.model_detail.is_some() {
         model_detail::render(frame, area, app);
+    }
+
+    if app.pull.is_some() {
+        pull_progress::render(frame, area, app);
+    }
+
+    if app.text_input.is_some() {
+        text_input::render(frame, area, app);
     }
 
     if app.confirm.is_some() {

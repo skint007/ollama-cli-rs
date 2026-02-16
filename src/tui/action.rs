@@ -21,11 +21,14 @@ pub enum Action {
     ScrollToBottom,
     NewChat,
     FocusChatInput,
+    FocusChatMessages,
 
     // Models
     RefreshModels,
     ShowModelDetail,
     DeleteModel,
+    PullModel,
+    CopyModel,
 
     // Running
     RefreshRunning,

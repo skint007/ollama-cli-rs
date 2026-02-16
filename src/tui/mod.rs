@@ -92,8 +92,13 @@ fn should_pass_to_textarea(app: &App, event: &crossterm::event::Event) -> bool {
     if app.focus != app::Focus::MainPanel
         || app.active_section != app::Section::Chat
         || app.chat.is_streaming
+        || app.chat.chat_focus != app::ChatFocus::Input
         || app.show_help
         || app.show_model_picker
+        || app.confirm.is_some()
+        || app.model_detail.is_some()
+        || app.text_input.is_some()
+        || app.pull.is_some()
     {
         return false;
     }
@@ -104,7 +109,7 @@ fn should_pass_to_textarea(app: &App, event: &crossterm::event::Event) -> bool {
             KeyCode::Enter if key.modifiers == KeyModifiers::NONE => false, // Send message
             KeyCode::Esc => false,
             KeyCode::Tab => false,
-            KeyCode::Char('m') if key.modifiers.contains(KeyModifiers::CONTROL) => false,
+            KeyCode::Char('m') if key.modifiers.contains(KeyModifiers::ALT) => false,
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => false,
             KeyCode::Char('?') if key.modifiers.contains(KeyModifiers::CONTROL) => false,
             _ => true, // All other keys go to textarea
