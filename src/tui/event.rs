@@ -4,7 +4,7 @@ use futures::StreamExt;
 use std::time::Duration;
 use tokio::sync::mpsc;
 
-use crate::api::types::{ModelInfo, RunningModel};
+use crate::api::types::{ModelInfo, RunningModel, ShowResponse};
 
 #[derive(Debug)]
 pub enum Event {
@@ -24,6 +24,12 @@ pub enum ApiEvent {
     ChatError(String),
     ModelsLoaded(Vec<ModelInfo>),
     RunningModelsLoaded(Vec<RunningModel>),
+    ModelDetailLoaded {
+        name: String,
+        response: ShowResponse,
+    },
+    ModelDeleted(String),
+    ModelUnloaded(String),
     ConnectionStatus(bool),
     Error(String),
 }

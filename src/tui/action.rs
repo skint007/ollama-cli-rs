@@ -31,9 +31,16 @@ pub enum Action {
     RefreshRunning,
     UnloadModel,
 
+    // Confirmation dialog
+    ConfirmYes,
+    ConfirmNo,
+
     // Model picker
     PickerConfirm,
     PickerCancel,
+
+    // Close overlay
+    CloseOverlay,
 
     None,
 }

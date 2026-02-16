@@ -5,7 +5,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::tui::app::{App, Section};
+use crate::tui::app::{App, Focus, Section};
 use crate::tui::theme::theme;
 
 pub fn render(frame: &mut Frame, area: Rect, app: &App) {
@@ -17,10 +17,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         Span::styled(" Disconnected ", t.status_disconnected)
     };
 
-    let url = Span::styled(
-        format!(" {} ", app.client.url()),
-        t.status_bar,
-    );
+    let url = Span::styled(format!(" {} ", app.client.url()), t.status_bar);
 
     let model_info = if app.active_section == Section::Chat {
         if let Some(model) = &app.chat.current_model {
@@ -39,14 +36,14 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     };
 
     // Left side: connection + url + model + status
-    let left = Line::from(vec![connected_indicator, url, model_info, status_msg])
-        .style(t.status_bar);
+    let left =
+        Line::from(vec![connected_indicator, url, model_info, status_msg]).style(t.status_bar);
 
     let left_para = Paragraph::new(left).style(t.status_bar);
 
-    // Right side: keybinding hints
-    let hints = " ?=Help  q=Quit  Tab=Nav ";
-    let right = Paragraph::new(Line::from(hints))
+    // Right side: context-aware keybinding hints
+    let hints = context_hints(app);
+    let right = Paragraph::new(Line::from(hints.as_str()))
         .style(t.status_bar)
         .alignment(Alignment::Right);
 
@@ -68,4 +65,37 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
 
     frame.render_widget(left_para, left_area);
     frame.render_widget(right, right_area);
+}
+
+fn context_hints(app: &App) -> String {
+    if app.show_help {
+        return " ?/Esc=Close ".to_string();
+    }
+    if app.confirm.is_some() {
+        return " y=Yes  n/Esc=Cancel ".to_string();
+    }
+    if app.model_detail.is_some() {
+        return " j/k=Scroll  Esc=Close ".to_string();
+    }
+    if app.show_model_picker {
+        return " Enter=Select  Esc=Cancel ".to_string();
+    }
+
+    match app.focus {
+        Focus::Sidebar => " j/k=Nav  Enter=Select  ?=Help ".to_string(),
+        Focus::MainPanel => match app.active_section {
+            Section::Chat => {
+                if app.chat.is_streaming {
+                    " j/k=Scroll  G=Bottom  ?=Help ".to_string()
+                } else {
+                    " Enter=Send  Ctrl+M=Model  ?=Help ".to_string()
+                }
+            }
+            Section::Models => {
+                " j/k=Nav  Enter=Detail  d=Delete  r=Refresh  ?=Help ".to_string()
+            }
+            Section::Running => " j/k=Nav  u=Unload  r=Refresh  ?=Help ".to_string(),
+            _ => " ?=Help  q=Quit  Tab=Nav ".to_string(),
+        },
+    }
 }

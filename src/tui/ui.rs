@@ -5,7 +5,7 @@ use ratatui::{
 
 use super::app::{App, Section};
 use super::views;
-use super::widgets::{help_overlay, model_picker, sidebar, status_bar};
+use super::widgets::{confirm_dialog, help_overlay, model_detail, model_picker, sidebar, status_bar};
 
 pub fn render(frame: &mut Frame, app: &mut App) {
     let area = frame.area();
@@ -40,9 +40,17 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     // Render status bar
     status_bar::render(frame, vertical[1], app);
 
-    // Render overlays on top
+    // Render overlays on top (order matters - last rendered is on top)
     if app.show_model_picker {
         model_picker::render(frame, area, app);
+    }
+
+    if app.model_detail.is_some() {
+        model_detail::render(frame, area, app);
+    }
+
+    if app.confirm.is_some() {
+        confirm_dialog::render(frame, area, app);
     }
 
     if app.show_help {

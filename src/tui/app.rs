@@ -4,7 +4,8 @@ use tokio::sync::mpsc;
 use tui_textarea::TextArea;
 
 use crate::api::types::{
-    ChatMessage, ChatRequest, ChatResponse, ModelInfo, PsResponse, RunningModel, TagsResponse,
+    ChatMessage, ChatRequest, ChatResponse, DeleteRequest, GenerateRequest, ModelInfo, PsResponse,
+    RunningModel, ShowRequest, ShowResponse, TagsResponse,
 };
 use crate::client::OllamaClient;
 use crate::config::Config;
@@ -90,6 +91,26 @@ pub struct ModelPickerState {
     pub list_state: ListState,
 }
 
+/// State for the model detail overlay
+pub struct ModelDetailState {
+    pub name: String,
+    pub response: ShowResponse,
+    pub scroll_offset: u16,
+}
+
+/// State for a confirmation dialog
+pub struct ConfirmState {
+    pub title: String,
+    pub message: String,
+    pub on_confirm: ConfirmAction,
+}
+
+#[derive(Clone)]
+pub enum ConfirmAction {
+    DeleteModel(String),
+    UnloadModel(String),
+}
+
 pub struct App {
     pub client: OllamaClient,
     pub config: Config,
@@ -103,6 +124,8 @@ pub struct App {
     pub show_help: bool,
     pub show_model_picker: bool,
     pub model_picker: ModelPickerState,
+    pub model_detail: Option<ModelDetailState>,
+    pub confirm: Option<ConfirmState>,
 
     pub chat: ChatState,
     pub models: ModelsState,
@@ -142,6 +165,8 @@ impl App {
                 filtered_models: Vec::new(),
                 list_state: ListState::default(),
             },
+            model_detail: None,
+            confirm: None,
 
             chat: ChatState {
                 messages: Vec::new(),
@@ -194,15 +219,24 @@ impl App {
     }
 
     fn handle_key(&mut self, key: crossterm::event::KeyEvent) -> Action {
+        use crossterm::event::KeyCode;
+
         // Help overlay takes priority
         if self.show_help {
-            if matches!(
-                key.code,
-                crossterm::event::KeyCode::Char('?') | crossterm::event::KeyCode::Esc
-            ) {
+            if matches!(key.code, KeyCode::Char('?') | KeyCode::Esc) {
                 self.show_help = false;
             }
             return Action::None;
+        }
+
+        // Confirmation dialog takes priority
+        if self.confirm.is_some() {
+            return self.handle_confirm_key(key);
+        }
+
+        // Model detail overlay takes priority
+        if self.model_detail.is_some() {
+            return self.handle_model_detail_key(key);
         }
 
         // Model picker overlay takes priority
@@ -241,13 +275,15 @@ impl App {
             Action::ToggleHelp => self.show_help = !self.show_help,
             Action::FocusSidebar => self.focus = Focus::Sidebar,
             Action::FocusMainPanel => self.focus = Focus::MainPanel,
-            Action::NavigateUp => self.navigate_sidebar(-1),
-            Action::NavigateDown => self.navigate_sidebar(1),
+            Action::NavigateUp => self.navigate(-1),
+            Action::NavigateDown => self.navigate(1),
             Action::SelectSection => self.select_sidebar_section(),
             Action::JumpToSection(section) => {
+                let prev = self.active_section;
                 self.active_section = section;
                 self.sidebar_state.select(Some(section.index()));
                 self.focus = Focus::MainPanel;
+                self.on_section_switch(prev, section);
             }
 
             // Chat actions
@@ -274,25 +310,38 @@ impl App {
 
             // Models
             Action::RefreshModels => self.fetch_models(),
-            Action::ShowModelDetail => {}
-            Action::DeleteModel => {}
+            Action::ShowModelDetail => self.show_model_detail(),
+            Action::DeleteModel => self.confirm_delete_model(),
 
             // Running
             Action::RefreshRunning => self.fetch_running(),
-            Action::UnloadModel => {}
+            Action::UnloadModel => self.confirm_unload_model(),
+
+            // Confirmation
+            Action::ConfirmYes | Action::ConfirmNo => {}
+
+            // Close overlay
+            Action::CloseOverlay => {
+                self.model_detail = None;
+                self.confirm = None;
+            }
 
             // Model picker handled separately
             Action::PickerConfirm | Action::PickerCancel => {}
 
-            Action::None => {
-                // In chat input context, pass key to textarea
-                if self.focus == Focus::MainPanel
-                    && self.active_section == Section::Chat
-                    && !self.chat.is_streaming
-                {
-                    // Key already consumed by textarea in the keymap if needed
-                }
-            }
+            Action::None => {}
+        }
+    }
+
+    /// Navigate up/down based on current focus and section
+    fn navigate(&mut self, delta: i32) {
+        match self.focus {
+            Focus::Sidebar => self.navigate_sidebar(delta),
+            Focus::MainPanel => match self.active_section {
+                Section::Models => self.navigate_models_table(delta),
+                Section::Running => self.navigate_running_table(delta),
+                _ => {}
+            },
         }
     }
 
@@ -303,12 +352,44 @@ impl App {
         self.sidebar_state.select(Some(next));
     }
 
+    fn navigate_models_table(&mut self, delta: i32) {
+        let len = self.models.models.len();
+        if len == 0 {
+            return;
+        }
+        let current = self.models.table_state.selected().unwrap_or(0) as i32;
+        let next = (current + delta).rem_euclid(len as i32) as usize;
+        self.models.table_state.select(Some(next));
+    }
+
+    fn navigate_running_table(&mut self, delta: i32) {
+        let len = self.running.models.len();
+        if len == 0 {
+            return;
+        }
+        let current = self.running.table_state.selected().unwrap_or(0) as i32;
+        let next = (current + delta).rem_euclid(len as i32) as usize;
+        self.running.table_state.select(Some(next));
+    }
+
     fn select_sidebar_section(&mut self) {
         if let Some(idx) = self.sidebar_state.selected() {
             if idx < Section::ALL.len() {
-                self.active_section = Section::ALL[idx];
+                let prev = self.active_section;
+                let next = Section::ALL[idx];
+                self.active_section = next;
                 self.focus = Focus::MainPanel;
+                self.on_section_switch(prev, next);
             }
+        }
+    }
+
+    /// Auto-refresh data when switching to a section
+    fn on_section_switch(&mut self, _prev: Section, next: Section) {
+        match next {
+            Section::Models => self.fetch_models(),
+            Section::Running => self.fetch_running(),
+            _ => {}
         }
     }
 
@@ -358,11 +439,8 @@ impl App {
             KeyCode::Up => {
                 let len = self.model_picker.filtered_models.len();
                 if len > 0 {
-                    let current = self
-                        .model_picker
-                        .list_state
-                        .selected()
-                        .unwrap_or(0) as i32;
+                    let current =
+                        self.model_picker.list_state.selected().unwrap_or(0) as i32;
                     let next = (current - 1).rem_euclid(len as i32) as usize;
                     self.model_picker.list_state.select(Some(next));
                 }
@@ -371,11 +449,8 @@ impl App {
             KeyCode::Down => {
                 let len = self.model_picker.filtered_models.len();
                 if len > 0 {
-                    let current = self
-                        .model_picker
-                        .list_state
-                        .selected()
-                        .unwrap_or(0) as i32;
+                    let current =
+                        self.model_picker.list_state.selected().unwrap_or(0) as i32;
                     let next = (current + 1).rem_euclid(len as i32) as usize;
                     self.model_picker.list_state.select(Some(next));
                 }
@@ -401,6 +476,229 @@ impl App {
         }
     }
 
+    fn handle_confirm_key(&mut self, key: crossterm::event::KeyEvent) -> Action {
+        use crossterm::event::KeyCode;
+
+        match key.code {
+            KeyCode::Char('y') | KeyCode::Char('Y') => {
+                if let Some(state) = self.confirm.take() {
+                    self.execute_confirmed(state.on_confirm);
+                }
+                Action::ConfirmYes
+            }
+            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                self.confirm = None;
+                Action::ConfirmNo
+            }
+            _ => Action::None,
+        }
+    }
+
+    fn handle_model_detail_key(&mut self, key: crossterm::event::KeyEvent) -> Action {
+        use crossterm::event::KeyCode;
+
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => {
+                self.model_detail = None;
+                Action::CloseOverlay
+            }
+            KeyCode::Char('j') | KeyCode::Down => {
+                if let Some(detail) = &mut self.model_detail {
+                    detail.scroll_offset = detail.scroll_offset.saturating_add(1);
+                }
+                Action::None
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                if let Some(detail) = &mut self.model_detail {
+                    detail.scroll_offset = detail.scroll_offset.saturating_sub(1);
+                }
+                Action::None
+            }
+            KeyCode::Char('d')
+                if key
+                    .modifiers
+                    .contains(crossterm::event::KeyModifiers::CONTROL) =>
+            {
+                if let Some(detail) = &mut self.model_detail {
+                    detail.scroll_offset = detail.scroll_offset.saturating_add(10);
+                }
+                Action::None
+            }
+            KeyCode::Char('u')
+                if key
+                    .modifiers
+                    .contains(crossterm::event::KeyModifiers::CONTROL) =>
+            {
+                if let Some(detail) = &mut self.model_detail {
+                    detail.scroll_offset = detail.scroll_offset.saturating_sub(10);
+                }
+                Action::None
+            }
+            _ => Action::None,
+        }
+    }
+
+    // === Model actions ===
+
+    fn show_model_detail(&mut self) {
+        let name = if let Some(idx) = self.models.table_state.selected() {
+            self.models.models.get(idx).map(|m| m.name.clone())
+        } else {
+            None
+        };
+
+        let Some(name) = name else {
+            self.status_message = Some(("No model selected".to_string(), Instant::now()));
+            return;
+        };
+
+        let client = self.client.clone();
+        let tx = self.api_tx.clone();
+        let model_name = name.clone();
+
+        tokio::spawn(async move {
+            let request = ShowRequest {
+                name: model_name.clone(),
+                verbose: false,
+            };
+            match client
+                .post::<ShowRequest, ShowResponse>("/api/show", &request)
+                .await
+            {
+                Ok(resp) => {
+                    let _ = tx.send(ApiEvent::ModelDetailLoaded {
+                        name: model_name,
+                        response: resp,
+                    });
+                }
+                Err(e) => {
+                    let _ = tx.send(ApiEvent::Error(format!(
+                        "Failed to load model details: {}",
+                        e
+                    )));
+                }
+            }
+        });
+
+        self.status_message = Some((format!("Loading details for {}...", name), Instant::now()));
+    }
+
+    fn confirm_delete_model(&mut self) {
+        let name = if let Some(idx) = self.models.table_state.selected() {
+            self.models.models.get(idx).map(|m| m.name.clone())
+        } else {
+            None
+        };
+
+        let Some(name) = name else {
+            self.status_message = Some(("No model selected".to_string(), Instant::now()));
+            return;
+        };
+
+        self.confirm = Some(ConfirmState {
+            title: "Delete Model".to_string(),
+            message: format!("Delete model '{}'? This cannot be undone. (y/n)", name),
+            on_confirm: ConfirmAction::DeleteModel(name),
+        });
+    }
+
+    fn confirm_unload_model(&mut self) {
+        let name = if let Some(idx) = self.running.table_state.selected() {
+            self.running.models.get(idx).map(|m| m.name.clone())
+        } else {
+            None
+        };
+
+        let Some(name) = name else {
+            self.status_message = Some(("No model selected".to_string(), Instant::now()));
+            return;
+        };
+
+        self.confirm = Some(ConfirmState {
+            title: "Unload Model".to_string(),
+            message: format!(
+                "Unload '{}' from memory? It can be loaded again later. (y/n)",
+                name
+            ),
+            on_confirm: ConfirmAction::UnloadModel(name),
+        });
+    }
+
+    fn execute_confirmed(&mut self, action: ConfirmAction) {
+        match action {
+            ConfirmAction::DeleteModel(name) => self.delete_model(&name),
+            ConfirmAction::UnloadModel(name) => self.unload_model(&name),
+        }
+    }
+
+    fn delete_model(&mut self, name: &str) {
+        let client = self.client.clone();
+        let tx = self.api_tx.clone();
+        let model_name = name.to_string();
+
+        tokio::spawn(async move {
+            let request = DeleteRequest {
+                name: model_name.clone(),
+            };
+            match client.delete("/api/delete", &request).await {
+                Ok(resp) => {
+                    if resp.status().is_success() {
+                        let _ = tx.send(ApiEvent::ModelDeleted(model_name));
+                    } else {
+                        let status = resp.status();
+                        let body = resp.text().await.unwrap_or_default();
+                        let _ = tx.send(ApiEvent::Error(format!(
+                            "Failed to delete model (HTTP {}): {}",
+                            status, body
+                        )));
+                    }
+                }
+                Err(e) => {
+                    let _ = tx.send(ApiEvent::Error(format!("Failed to delete model: {}", e)));
+                }
+            }
+        });
+
+        self.status_message = Some((format!("Deleting {}...", name), Instant::now()));
+    }
+
+    fn unload_model(&mut self, name: &str) {
+        let client = self.client.clone();
+        let tx = self.api_tx.clone();
+        let model_name = name.to_string();
+
+        tokio::spawn(async move {
+            let request = GenerateRequest {
+                model: model_name.clone(),
+                prompt: String::new(),
+                stream: false,
+                keep_alive: Some(0),
+                ..Default::default()
+            };
+            match client.post_raw("/api/generate", &request).await {
+                Ok(resp) => {
+                    if resp.status().is_success() {
+                        let _ = tx.send(ApiEvent::ModelUnloaded(model_name));
+                    } else {
+                        let status = resp.status();
+                        let body = resp.text().await.unwrap_or_default();
+                        let _ = tx.send(ApiEvent::Error(format!(
+                            "Failed to unload model (HTTP {}): {}",
+                            status, body
+                        )));
+                    }
+                }
+                Err(e) => {
+                    let _ = tx.send(ApiEvent::Error(format!("Failed to unload model: {}", e)));
+                }
+            }
+        });
+
+        self.status_message = Some((format!("Unloading {}...", name), Instant::now()));
+    }
+
+    // === Chat ===
+
     pub fn send_chat_message(&mut self) {
         let input = self.chat.textarea.lines().join("\n");
         let input = input.trim().to_string();
@@ -411,8 +709,10 @@ impl App {
         let model = match &self.chat.current_model {
             Some(m) => m.clone(),
             None => {
-                self.status_message =
-                    Some(("No model selected. Press Ctrl+M to pick one.".to_string(), Instant::now()));
+                self.status_message = Some((
+                    "No model selected. Press Ctrl+M to pick one.".to_string(),
+                    Instant::now(),
+                ));
                 return;
             }
         };
@@ -425,7 +725,9 @@ impl App {
 
         // Clear input
         self.chat.textarea = TextArea::default();
-        self.chat.textarea.set_placeholder_text("Type your message...");
+        self.chat
+            .textarea
+            .set_placeholder_text("Type your message...");
         self.chat.is_streaming = true;
         self.chat.streaming_buffer.clear();
         self.chat.auto_scroll = true;
@@ -472,6 +774,8 @@ impl App {
         });
     }
 
+    // === API event handling ===
+
     pub fn handle_api_event(&mut self, event: ApiEvent) {
         match event {
             ApiEvent::ChatToken(token) => {
@@ -482,7 +786,6 @@ impl App {
                 eval_duration,
                 total_duration,
             } => {
-                // Commit streaming buffer to messages
                 if !self.chat.streaming_buffer.is_empty() {
                     self.chat.messages.push(ChatMessage {
                         role: "assistant".to_string(),
@@ -508,7 +811,11 @@ impl App {
             ApiEvent::ModelsLoaded(models) => {
                 self.models.models = models;
                 self.models.loading = false;
-                // Auto-select first model if none selected
+                // Select first row if nothing selected
+                if self.models.table_state.selected().is_none() && !self.models.models.is_empty() {
+                    self.models.table_state.select(Some(0));
+                }
+                // Auto-select first model for chat if none selected
                 if self.chat.current_model.is_none() {
                     if let Some(first) = self.models.models.first() {
                         self.chat.current_model = Some(first.name.clone());
@@ -518,6 +825,29 @@ impl App {
             ApiEvent::RunningModelsLoaded(models) => {
                 self.running.models = models;
                 self.running.loading = false;
+                if self.running.table_state.selected().is_none()
+                    && !self.running.models.is_empty()
+                {
+                    self.running.table_state.select(Some(0));
+                }
+            }
+            ApiEvent::ModelDetailLoaded { name, response } => {
+                self.model_detail = Some(ModelDetailState {
+                    name,
+                    response,
+                    scroll_offset: 0,
+                });
+                self.status_message = None;
+            }
+            ApiEvent::ModelDeleted(name) => {
+                self.status_message =
+                    Some((format!("Model '{}' deleted", name), Instant::now()));
+                self.fetch_models();
+            }
+            ApiEvent::ModelUnloaded(name) => {
+                self.status_message =
+                    Some((format!("Model '{}' unloaded", name), Instant::now()));
+                self.fetch_running();
             }
             ApiEvent::ConnectionStatus(connected) => {
                 self.connected = connected;
@@ -527,6 +857,8 @@ impl App {
             }
         }
     }
+
+    // === Data fetching ===
 
     pub fn fetch_models(&mut self) {
         self.models.loading = true;
