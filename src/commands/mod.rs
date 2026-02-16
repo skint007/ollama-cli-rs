@@ -1,0 +1,15 @@
+pub mod benchmark;
+pub mod chat;
+pub mod config_cmd;
+pub mod copy;
+pub mod create;
+pub mod embed;
+pub mod generate;
+pub mod library;
+pub mod list;
+pub mod ps;
+pub mod pull;
+pub mod push;
+pub mod remove;
+pub mod show;
+pub mod unload;
