@@ -5,7 +5,6 @@ pub enum Action {
     Quit,
     ToggleHelp,
     FocusSidebar,
-    FocusMainPanel,
     NavigateUp,
     NavigateDown,
     SelectSection,
@@ -42,6 +41,7 @@ pub enum Action {
 
     // Library
     LibraryRefresh,
+    LibraryShowDetail,
     LibraryPull,
     LibrarySearch,
     LibraryToggleSort,

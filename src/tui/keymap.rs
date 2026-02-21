@@ -5,7 +5,6 @@ use super::app::Section;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum InputContext {
-    Global,
     Sidebar,
     ChatInput,
     ChatMessages,
@@ -34,22 +33,6 @@ pub fn map_key_event(key: KeyEvent, context: &InputContext) -> Action {
         InputContext::ConfigTable => map_config_key(key),
         InputContext::LibraryTable => map_library_key(key),
         InputContext::BenchmarkTable => map_benchmark_key(key),
-        InputContext::Global => map_global_key(key),
-    }
-}
-
-fn map_global_key(key: KeyEvent) -> Action {
-    match key.code {
-        KeyCode::Char('q') => Action::Quit,
-        KeyCode::Char('?') => Action::ToggleHelp,
-        KeyCode::Tab | KeyCode::BackTab => Action::FocusSidebar,
-        KeyCode::Char('1') => Action::JumpToSection(Section::Chat),
-        KeyCode::Char('2') => Action::JumpToSection(Section::Models),
-        KeyCode::Char('3') => Action::JumpToSection(Section::Running),
-        KeyCode::Char('4') => Action::JumpToSection(Section::Library),
-        KeyCode::Char('5') => Action::JumpToSection(Section::Benchmarks),
-        KeyCode::Char('6') => Action::JumpToSection(Section::Config),
-        _ => Action::None,
     }
 }
 
@@ -174,7 +157,8 @@ fn map_library_key(key: KeyEvent) -> Action {
         KeyCode::Char('?') => Action::ToggleHelp,
         KeyCode::Char('j') | KeyCode::Down => Action::NavigateDown,
         KeyCode::Char('k') | KeyCode::Up => Action::NavigateUp,
-        KeyCode::Char('p') | KeyCode::Enter => Action::LibraryPull,
+        KeyCode::Enter => Action::LibraryShowDetail,
+        KeyCode::Char('p') => Action::LibraryPull,
         KeyCode::Char('r') => Action::LibraryRefresh,
         KeyCode::Char('/') => Action::LibrarySearch,
         KeyCode::Char('s') => Action::LibraryToggleSort,

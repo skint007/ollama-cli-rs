@@ -5,7 +5,7 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 
 use crate::api::types::{ModelInfo, RunningModel, ShowResponse};
-use crate::tui::app::{BenchmarkResult, LibraryModel};
+use crate::tui::app::{BenchmarkResult, LibraryModel, LibraryTagDetail};
 
 #[derive(Debug)]
 pub enum Event {
@@ -17,11 +17,7 @@ pub enum Event {
 #[derive(Debug)]
 pub enum ApiEvent {
     ChatToken(String),
-    ChatDone {
-        eval_count: Option<u64>,
-        eval_duration: Option<u64>,
-        total_duration: Option<u64>,
-    },
+    ChatDone,
     ChatError(String),
     ModelsLoaded(Vec<ModelInfo>),
     RunningModelsLoaded(Vec<RunningModel>),
@@ -45,6 +41,8 @@ pub enum ApiEvent {
     PullError(String),
     LibraryLoaded(Vec<LibraryModel>),
     LibraryError(String),
+    LibraryDetailLoaded { name: String, tags: Vec<LibraryTagDetail> },
+    LibraryDetailError,
     BenchmarkProgress {
         model: String,
         round: u32,

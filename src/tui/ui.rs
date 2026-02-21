@@ -6,8 +6,8 @@ use ratatui::{
 use super::app::{App, Section};
 use super::views;
 use super::widgets::{
-    confirm_dialog, help_overlay, model_detail, model_picker, pull_progress, sidebar, status_bar,
-    text_input, toast,
+    confirm_dialog, help_overlay, library_detail, model_detail, model_picker, pull_progress,
+    sidebar, status_bar, text_input, toast,
 };
 
 pub fn render(frame: &mut Frame, app: &mut App) {
@@ -50,6 +50,10 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
     if app.model_detail.is_some() {
         model_detail::render(frame, area, app);
+    }
+
+    if app.library_detail.is_some() {
+        library_detail::render(frame, area, app);
     }
 
     if app.pull.is_some() {

@@ -1,6 +1,7 @@
 pub mod confirm_dialog;
 pub mod help_overlay;
 pub mod input_box;
+pub mod library_detail;
 pub mod message_list;
 pub mod model_detail;
 pub mod model_picker;

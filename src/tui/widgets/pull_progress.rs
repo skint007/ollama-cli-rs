@@ -20,7 +20,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     // Size the popup based on content
     let layer_count = pull.layer_order.len();
     let content_height = 4 + layer_count + 3; // status + layers + footer
-    let popup_width = 70.min(area.width.saturating_sub(4));
+    let popup_width = area.width.saturating_sub(4);
     let popup_height = (content_height as u16 + 2).min(area.height.saturating_sub(4));
     let x = (area.width.saturating_sub(popup_width)) / 2 + area.x;
     let y = (area.height.saturating_sub(popup_height)) / 2 + area.y;

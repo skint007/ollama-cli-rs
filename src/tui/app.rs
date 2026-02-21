@@ -71,15 +71,8 @@ pub struct ChatState {
     pub scroll_offset: usize,
     pub is_streaming: bool,
     pub streaming_buffer: String,
-    pub last_stats: Option<ChatStats>,
     pub auto_scroll: bool,
     pub chat_focus: ChatFocus,
-}
-
-pub struct ChatStats {
-    pub eval_count: u64,
-    pub eval_duration: u64,
-    pub total_duration: u64,
 }
 
 pub struct ModelsState {
@@ -120,6 +113,19 @@ pub struct LibraryState {
 pub enum LibrarySort {
     Popular,
     Newest,
+}
+
+#[derive(Debug, Clone)]
+pub struct LibraryTagDetail {
+    pub name: String, // e.g. "7b", "70b-instruct-q4_0"
+    pub size: String, // e.g. "4.7 GB" (empty if unavailable)
+}
+
+pub struct LibraryDetailState {
+    pub model: LibraryModel,
+    pub tags: Vec<LibraryTagDetail>,
+    pub loading: bool,
+    pub list_state: ListState,
 }
 
 pub struct BenchmarkState {
@@ -216,6 +222,7 @@ pub struct App {
     pub show_model_picker: bool,
     pub model_picker: ModelPickerState,
     pub model_detail: Option<ModelDetailState>,
+    pub library_detail: Option<LibraryDetailState>,
     pub confirm: Option<ConfirmState>,
     pub text_input: Option<TextInputState>,
     pub pull: Option<PullState>,
@@ -262,6 +269,7 @@ impl App {
                 list_state: ListState::default(),
             },
             model_detail: None,
+            library_detail: None,
             confirm: None,
             text_input: None,
             pull: None,
@@ -273,7 +281,6 @@ impl App {
                 scroll_offset: 0,
                 is_streaming: false,
                 streaming_buffer: String::new(),
-                last_stats: None,
                 auto_scroll: true,
                 chat_focus: ChatFocus::Input,
             },
@@ -369,6 +376,11 @@ impl App {
             return self.handle_pull_overlay_key(key);
         }
 
+        // Library detail overlay takes priority
+        if self.library_detail.is_some() {
+            return self.handle_library_detail_key(key);
+        }
+
         // Model detail overlay takes priority
         if self.model_detail.is_some() {
             return self.handle_model_detail_key(key);
@@ -414,7 +426,6 @@ impl App {
                 self.focus = Focus::Sidebar;
                 self.chat.chat_focus = ChatFocus::Input;
             }
-            Action::FocusMainPanel => self.focus = Focus::MainPanel,
             Action::NavigateUp => self.navigate(-1),
             Action::NavigateDown => self.navigate(1),
             Action::SelectSection => self.select_sidebar_section(),
@@ -441,7 +452,6 @@ impl App {
                 self.chat.messages.clear();
                 self.chat.streaming_buffer.clear();
                 self.chat.scroll_offset = 0;
-                self.chat.last_stats = None;
                 self.chat.auto_scroll = true;
             }
             Action::FocusChatInput => {
@@ -471,6 +481,7 @@ impl App {
 
             // Library
             Action::LibraryRefresh => self.fetch_library(),
+            Action::LibraryShowDetail => self.library_show_detail(),
             Action::LibraryPull => self.library_pull_selected(),
             Action::LibrarySearch => self.library_open_search(),
             Action::LibraryToggleSort => self.library_toggle_sort(),
@@ -1324,7 +1335,12 @@ impl App {
             .map(|m| m.name.clone());
 
         if let Some(name) = model_name {
-            self.pull_model(&name);
+            self.text_input = Some(TextInputState {
+                title: "Pull Model".to_string(),
+                prompt: "Confirm or edit model tag (e.g. :120b):".to_string(),
+                input: name,
+                on_submit: TextInputAction::PullModel,
+            });
         } else {
             self.status_message = Some(("No model selected".to_string(), Instant::now()));
         }
@@ -1345,6 +1361,90 @@ impl App {
             LibrarySort::Newest => LibrarySort::Popular,
         };
         self.fetch_library();
+    }
+
+    fn library_show_detail(&mut self) {
+        let idx = self.library.list_state.selected();
+        let model = idx
+            .and_then(|i| self.library.filtered.get(i).copied())
+            .and_then(|i| self.library.models.get(i))
+            .cloned();
+
+        let Some(model) = model else {
+            self.status_message = Some(("No model selected".to_string(), Instant::now()));
+            return;
+        };
+
+        // Seed tag list with what we already have from the listing page
+        let initial_tags: Vec<LibraryTagDetail> = model
+            .tags
+            .iter()
+            .map(|t| LibraryTagDetail { name: t.clone(), size: String::new() })
+            .collect();
+
+        let mut list_state = ListState::default();
+        if !initial_tags.is_empty() {
+            list_state.select(Some(0));
+        }
+
+        let model_name = model.name.clone();
+        self.library_detail = Some(LibraryDetailState {
+            model,
+            tags: initial_tags,
+            loading: true,
+            list_state,
+        });
+
+        // Spawn background fetch for per-tag file sizes
+        let tx = self.api_tx.clone();
+        tokio::spawn(async move {
+            match fetch_library_model_detail(&model_name).await {
+                Ok(tags) => {
+                    let _ = tx.send(ApiEvent::LibraryDetailLoaded { name: model_name, tags });
+                }
+                Err(_) => {
+                    let _ = tx.send(ApiEvent::LibraryDetailError);
+                }
+            }
+        });
+    }
+
+    fn handle_library_detail_key(&mut self, key: crossterm::event::KeyEvent) -> Action {
+        use crossterm::event::KeyCode;
+        match key.code {
+            KeyCode::Esc => {
+                self.library_detail = None;
+                Action::CloseOverlay
+            }
+            KeyCode::Char('j') | KeyCode::Down => {
+                if let Some(detail) = &mut self.library_detail {
+                    let len = detail.tags.len();
+                    if len > 0 {
+                        let next = detail.list_state.selected().map_or(0, |i| (i + 1).min(len - 1));
+                        detail.list_state.select(Some(next));
+                    }
+                }
+                Action::None
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                if let Some(detail) = &mut self.library_detail {
+                    let next = detail.list_state.selected().map_or(0, |i| i.saturating_sub(1));
+                    detail.list_state.select(Some(next));
+                }
+                Action::None
+            }
+            KeyCode::Enter | KeyCode::Char('p') => {
+                if let Some(detail) = self.library_detail.take() {
+                    let selected = detail.list_state.selected().unwrap_or(0);
+                    if let Some(tag) = detail.tags.get(selected) {
+                        let model_ref = format!("{}:{}", detail.model.name, tag.name);
+                        self.pull_model(&model_ref);
+                    }
+                }
+                Action::None
+            }
+            _ => Action::None,
+        }
     }
 
     // === Benchmarks ===
@@ -1500,11 +1600,7 @@ impl App {
                             }
                         }
                         if chunk.done == Some(true) {
-                            let _ = tx.send(ApiEvent::ChatDone {
-                                eval_count: chunk.eval_count,
-                                eval_duration: chunk.eval_duration,
-                                total_duration: chunk.total_duration,
-                            });
+                            let _ = tx.send(ApiEvent::ChatDone);
                             return;
                         }
                     }
@@ -1523,11 +1619,7 @@ impl App {
             ApiEvent::ChatToken(token) => {
                 self.chat.streaming_buffer.push_str(&token);
             }
-            ApiEvent::ChatDone {
-                eval_count,
-                eval_duration,
-                total_duration,
-            } => {
+            ApiEvent::ChatDone => {
                 if !self.chat.streaming_buffer.is_empty() {
                     self.chat.messages.push(ChatMessage {
                         role: "assistant".to_string(),
@@ -1535,15 +1627,6 @@ impl App {
                     });
                 }
                 self.chat.is_streaming = false;
-
-                if let (Some(ec), Some(ed), Some(td)) = (eval_count, eval_duration, total_duration)
-                {
-                    self.chat.last_stats = Some(ChatStats {
-                        eval_count: ec,
-                        eval_duration: ed,
-                        total_duration: td,
-                    });
-                }
             }
             ApiEvent::ChatError(err) => {
                 self.chat.is_streaming = false;
@@ -1645,6 +1728,22 @@ impl App {
                 self.library.loading = false;
                 self.status_message =
                     Some((format!("Library error: {}", err), Instant::now()));
+            }
+            ApiEvent::LibraryDetailLoaded { name, tags } => {
+                if let Some(detail) = &mut self.library_detail {
+                    if detail.model.name == name {
+                        detail.tags = tags;
+                        detail.loading = false;
+                        if !detail.tags.is_empty() && detail.list_state.selected().is_none() {
+                            detail.list_state.select(Some(0));
+                        }
+                    }
+                }
+            }
+            ApiEvent::LibraryDetailError => {
+                if let Some(detail) = &mut self.library_detail {
+                    detail.loading = false;
+                }
             }
             ApiEvent::BenchmarkProgress {
                 model,
@@ -1791,6 +1890,67 @@ async fn fetch_library_models(sort: LibrarySort) -> anyhow::Result<Vec<LibraryMo
     }
 
     Ok(models)
+}
+
+/// Fetch per-tag detail (name + file size) from a model's ollama.com page
+async fn fetch_library_model_detail(model_name: &str) -> anyhow::Result<Vec<LibraryTagDetail>> {
+    use scraper::{Html, Selector};
+
+    // The /tags subpage lists every tag in a table with its file size
+    let url = format!("https://ollama.com/library/{}/tags", model_name);
+    let html_text = reqwest::get(&url).await?.text().await?;
+    let document = Html::parse_document(&html_text);
+
+    let mut tags: Vec<LibraryTagDetail> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+
+    // Each tag row is an <a> linking to /library/{model}:{tag}
+    let selector_str = format!("a[href^='/library/{}:']", model_name);
+    let Ok(selector) = Selector::parse(&selector_str) else {
+        return Ok(tags);
+    };
+
+    for element in document.select(&selector) {
+        let href = element.value().attr("href").unwrap_or("");
+        let tag = match href.split(':').nth(1) {
+            Some(t) if !t.is_empty() => t.to_string(),
+            _ => continue,
+        };
+        if !seen.insert(tag.clone()) {
+            continue;
+        }
+
+        // The size lives inside this <a> element as child text — each link
+        // on the /tags page wraps its own row, so inner text is tag-specific.
+        let inner_text = element.text().collect::<Vec<_>>().join(" ");
+        let size = extract_file_size(&inner_text);
+
+        tags.push(LibraryTagDetail { name: tag, size });
+    }
+
+    Ok(tags)
+}
+
+/// Extract a file-size token (e.g. "4.7 GB", "815 MB") from arbitrary text
+fn extract_file_size(text: &str) -> String {
+    let words: Vec<&str> = text.split_whitespace().collect();
+    for (i, word) in words.iter().enumerate() {
+        if (*word == "GB" || *word == "MB") && i > 0 {
+            let num = words[i - 1];
+            if num.chars().all(|c| c.is_ascii_digit() || c == '.') {
+                return format!("{} {}", num, word);
+            }
+        }
+        // Handle "4.7GB" / "815MB" without space
+        for suffix in &["GB", "MB"] {
+            if let Some(num) = word.strip_suffix(suffix) {
+                if !num.is_empty() && num.chars().all(|c| c.is_ascii_digit() || c == '.') {
+                    return format!("{} {}", num, suffix);
+                }
+            }
+        }
+    }
+    String::new()
 }
 
 /// Run benchmarks for selected models, sending progress via channel
