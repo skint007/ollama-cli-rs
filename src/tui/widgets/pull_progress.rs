@@ -83,8 +83,36 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     ]));
     lines.push(Line::from(""));
 
-    // Render each layer's progress
-    let bar_width = popup_width.saturating_sub(30) as usize; // space for label + stats
+    // Compute overall download speed and ETA from all layers
+    let total_completed: u64 = pull.layers.values().map(|l| l.completed).sum();
+    let total_bytes: u64 = pull.layers.values().map(|l| l.total).sum();
+    let elapsed = pull.started_at.elapsed().as_secs_f64();
+    let speed_bps = if elapsed > 1.0 && total_completed > 0 {
+        total_completed as f64 / elapsed
+    } else {
+        0.0
+    };
+    let eta_str = if pull.is_complete || speed_bps == 0.0 || total_bytes == 0 {
+        String::new()
+    } else {
+        let remaining = total_bytes.saturating_sub(total_completed) as f64;
+        let eta_secs = (remaining / speed_bps) as u64;
+        if eta_secs >= 3600 {
+            format!(" ETA:{:>2}h{:02}m", eta_secs / 3600, (eta_secs % 3600) / 60)
+        } else if eta_secs >= 60 {
+            format!(" ETA:{:>2}m{:02}s", eta_secs / 60, eta_secs % 60)
+        } else {
+            format!(" ETA:{:>4}s", eta_secs)
+        }
+    };
+    let speed_str = if speed_bps > 0.0 && !pull.is_complete {
+        format!(" {}/s", format::bytes_to_human(speed_bps as u64))
+    } else {
+        String::new()
+    };
+
+    // label=11, size_info=~21, speed=~9, eta=~9, borders=2  → reserve 52 chars for non-bar content
+    let bar_width = popup_width.saturating_sub(52) as usize;
     for digest in &pull.layer_order {
         if let Some(layer) = pull.layers.get(digest) {
             let short_id = if digest.len() > 15 {
@@ -127,6 +155,8 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
                 Span::styled(bar_filled, Style::new().fg(bar_color)),
                 Span::styled(bar_empty, Style::new().fg(Color::DarkGray)),
                 Span::raw(size_info),
+                Span::styled(speed_str.clone(), Style::new().fg(Color::Yellow)),
+                Span::styled(eta_str.clone(), Style::new().fg(Color::Cyan)),
             ]));
         }
     }

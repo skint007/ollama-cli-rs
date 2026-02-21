@@ -201,6 +201,7 @@ pub struct PullState {
     pub layers: HashMap<String, PullLayerProgress>,
     pub layer_order: Vec<String>,
     pub is_complete: bool,
+    pub started_at: Instant,
 }
 
 pub struct PullLayerProgress {
@@ -843,6 +844,7 @@ impl App {
             layers: HashMap::new(),
             layer_order: Vec::new(),
             is_complete: false,
+            started_at: Instant::now(),
         });
 
         let client = self.client.clone();
