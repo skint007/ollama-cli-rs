@@ -17,7 +17,7 @@ pub enum Event {
 #[derive(Debug)]
 pub enum ApiEvent {
     ChatToken(String),
-    ChatDone,
+    ChatDone { tokens_per_sec: Option<f64> },
     ChatError(String),
     ModelsLoaded(Vec<ModelInfo>),
     RunningModelsLoaded(Vec<RunningModel>),

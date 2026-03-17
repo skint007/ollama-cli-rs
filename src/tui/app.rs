@@ -73,6 +73,7 @@ pub struct ChatState {
     pub streaming_buffer: String,
     pub auto_scroll: bool,
     pub chat_focus: ChatFocus,
+    pub last_tokens_per_sec: Option<f64>,
 }
 
 pub struct ModelsState {
@@ -284,6 +285,7 @@ impl App {
                 streaming_buffer: String::new(),
                 auto_scroll: true,
                 chat_focus: ChatFocus::Input,
+                last_tokens_per_sec: None,
             },
 
             models: ModelsState {
@@ -1602,7 +1604,14 @@ impl App {
                             }
                         }
                         if chunk.done == Some(true) {
-                            let _ = tx.send(ApiEvent::ChatDone);
+                            let tokens_per_sec = chunk.eval_count
+                                .zip(chunk.eval_duration)
+                                .filter(|(_, dur)| *dur > 0)
+                                .map(|(count, dur)| {
+                                    use crate::format::tokens_per_sec;
+                                    tokens_per_sec(count, dur)
+                                });
+                            let _ = tx.send(ApiEvent::ChatDone { tokens_per_sec });
                             return;
                         }
                     }
@@ -1621,7 +1630,7 @@ impl App {
             ApiEvent::ChatToken(token) => {
                 self.chat.streaming_buffer.push_str(&token);
             }
-            ApiEvent::ChatDone => {
+            ApiEvent::ChatDone { tokens_per_sec } => {
                 if !self.chat.streaming_buffer.is_empty() {
                     self.chat.messages.push(ChatMessage {
                         role: "assistant".to_string(),
@@ -1629,6 +1638,7 @@ impl App {
                     });
                 }
                 self.chat.is_streaming = false;
+                self.chat.last_tokens_per_sec = tokens_per_sec;
             }
             ApiEvent::ChatError(err) => {
                 self.chat.is_streaming = false;

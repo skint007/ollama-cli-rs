@@ -27,9 +27,15 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         .as_deref()
         .unwrap_or("No model selected");
 
+    let speed_str = match app.chat.last_tokens_per_sec {
+        Some(tps) if !app.chat.is_streaming => format!("  {:.1} tok/s", tps),
+        _ => String::new(),
+    };
+
     let header = Line::from(vec![
         Span::styled(" Chat - ", t.title),
         Span::styled(model_name, t.title.add_modifier(Modifier::ITALIC)),
+        Span::styled(speed_str, t.muted),
         Span::raw("  "),
         Span::styled("Ctrl+M=Model", t.muted),
     ]);
