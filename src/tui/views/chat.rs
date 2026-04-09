@@ -37,7 +37,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         Span::styled(model_name, t.title.add_modifier(Modifier::ITALIC)),
         Span::styled(speed_str, t.muted),
         Span::raw("  "),
-        Span::styled("Ctrl+M=Model", t.muted),
+        Span::styled("Alt+M=Model", t.muted),
     ]);
 
     frame.render_widget(Paragraph::new(header), chunks[0]);

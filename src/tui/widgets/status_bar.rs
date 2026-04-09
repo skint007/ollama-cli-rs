@@ -19,18 +19,8 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
 
     let url = Span::styled(format!(" {} ", app.client.url()), t.status_bar);
 
-    let model_info = if app.active_section == Section::Chat {
-        if let Some(model) = &app.chat.current_model {
-            Span::styled(format!(" Model: {} ", model), t.status_bar)
-        } else {
-            Span::styled(" No model ", t.status_bar)
-        }
-    } else {
-        Span::raw("")
-    };
-
-    // Left side: connection + url + model
-    let left = Line::from(vec![connected_indicator, url, model_info]).style(t.status_bar);
+    // Left side: connection + url
+    let left = Line::from(vec![connected_indicator, url]).style(t.status_bar);
 
     let left_para = Paragraph::new(left).style(t.status_bar);
 
@@ -93,7 +83,7 @@ fn context_hints(app: &App) -> String {
                 } else if app.chat.chat_focus == ChatFocus::Messages {
                     " j/k=Scroll  i=Input  Esc=Sidebar  ?=Help ".to_string()
                 } else {
-                    " Enter=Send  Alt+M=Model  Esc=Scroll  ?=Help ".to_string()
+                    " Enter=Send  Esc=Scroll  ?=Help ".to_string()
                 }
             }
             Section::Models => {

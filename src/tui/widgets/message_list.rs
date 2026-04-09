@@ -98,7 +98,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         )));
         if app.chat.current_model.is_none() {
             lines.push(Line::from(Span::styled(
-                "  Press Ctrl+M to select a model first.",
+                "  Press Alt+M to select a model first.",
                 t.muted,
             )));
         }
@@ -112,7 +112,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         total_lines.saturating_sub(visible_lines)
     } else {
         let max_scroll = total_lines.saturating_sub(visible_lines);
-        (app.chat.scroll_offset as u16).min(max_scroll)
+        max_scroll.saturating_sub((app.chat.scroll_offset as u16).min(max_scroll))
     };
 
     let paragraph = Paragraph::new(lines)
