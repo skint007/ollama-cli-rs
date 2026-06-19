@@ -1,0 +1,38 @@
+# Maintainer: skint007 <archlinux.repose742@passmail.net>
+# Built from source by the `paw` personal repo CI (not the official AUR).
+pkgname=ollama-cli
+pkgver=0.0.0
+pkgrel=1
+pkgdesc="CLI tool and interactive TUI for managing remote Ollama instances"
+arch=('x86_64')
+url="https://github.com/skint007/ollama-cli-rs"
+license=('MIT')
+depends=('gcc-libs' 'glibc')
+makedepends=('git' 'rust')
+conflicts=('ollama-cli-bin' 'ollama-cli-git')
+options=('!debug')         # compiled lang: skip the auto -debug split package
+source=("git+https://github.com/skint007/ollama-cli-rs.git")
+sha256sums=('SKIP')
+
+pkgver() {
+    cd "$srcdir/ollama-cli-rs"
+    # Clean base version from Cargo.toml + a monotonic git suffix, e.g. 0.1.0.r42.a1b2c3d.
+    # Every commit bumps the version, so a paw rebuild always reads as an update.
+    local v r h
+    v=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
+    r=$(git rev-list --count HEAD)
+    h=$(git rev-parse --short=7 HEAD)
+    printf '%s.r%s.%s' "$v" "$r" "$h"
+}
+
+build() {
+    cd "$srcdir/ollama-cli-rs"
+    cargo build --release --locked
+}
+
+package() {
+    cd "$srcdir/ollama-cli-rs"
+    install -Dm755 target/release/ollama-cli "$pkgdir/usr/bin/ollama-cli"
+    install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
+    install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

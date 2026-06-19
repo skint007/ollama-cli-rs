@@ -1,1 +1,9 @@
 /target
+
+# makepkg artifacts from a local build in aur/
+/aur/src/
+/aur/pkg/
+/aur/*.pkg.tar.zst
+/aur/*.tar.gz
+/aur/.SRCINFO
+/aur/ollama-cli-rs/
