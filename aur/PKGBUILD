@@ -1,7 +1,7 @@
 # Maintainer: skint007 <archlinux.repose742@passmail.net>
 # Built from source by the `paw` personal repo CI (not the official AUR).
 pkgname=ollama-cli
-pkgver=0.0.0
+pkgver=0.1.0.r15.6a06a0a
 pkgrel=1
 pkgdesc="CLI tool and interactive TUI for managing remote Ollama instances"
 arch=('x86_64')
@@ -27,6 +27,12 @@ pkgver() {
 
 build() {
     cd "$srcdir/ollama-cli-rs"
+    # `ring` (pulled in by reqwest's rustls-tls) compiles C/asm whose symbols lld
+    # drops in its single-pass archive resolution -> undefined ring_core_* at link.
+    # Force the bfd linker (resolves the archive), and clear makepkg's C flags so
+    # ring's bundled C/asm compiles with its own defaults.
+    unset CFLAGS CXXFLAGS LDFLAGS
+    export RUSTFLAGS="${RUSTFLAGS:-} -Clink-arg=-fuse-ld=bfd"
     cargo build --release --locked
 }
 
