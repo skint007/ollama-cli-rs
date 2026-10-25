@@ -1,6 +1,6 @@
 use anyhow::Result;
 
-use crate::api::types::{EmbedRequest, EmbedResponse};
+use crate::api::types::EmbedRequest;
 use crate::cli::{resolve_model, resolve_text};
 use crate::client::OllamaClient;
 
@@ -37,7 +37,7 @@ pub async fn execute(client: &OllamaClient, args: EmbedArgs) -> Result<()> {
         options,
     };
 
-    let response: EmbedResponse = client.post("/api/embed", &request).await?;
+    let response = client.embed(&request).await?;
 
     if response.embeddings.is_empty() {
         println!("No embeddings generated.");

@@ -1,7 +1,7 @@
 use anyhow::Result;
 use std::io::Write;
 
-use crate::api::types::{ChatMessage, ChatRequest, ChatResponse};
+use crate::api::types::{ChatMessage, ChatRequest};
 use crate::cli::{resolve_model, resolve_text};
 use crate::client::OllamaClient;
 
@@ -83,8 +83,8 @@ pub async fn execute(client: &OllamaClient, args: ChatArgs) -> Result<()> {
             let mut assistant_text = String::new();
 
             if !args.no_stream {
-                let mut stream = client.post_stream("/api/chat", &request).await?;
-                while let Some(chunk) = stream.next_json::<ChatResponse>().await? {
+                let mut stream = client.chat_stream(&request).await?;
+                while let Some(chunk) = stream.next_chunk().await? {
                     if let Some(err) = &chunk.error {
                         eprintln!("\nError: {}", err);
                         break;
@@ -99,7 +99,7 @@ pub async fn execute(client: &OllamaClient, args: ChatArgs) -> Result<()> {
                     }
                 }
             } else {
-                let response: ChatResponse = client.post("/api/chat", &request).await?;
+                let response = client.chat(&request).await?;
                 if let Some(msg) = &response.message {
                     println!("{}", msg.content);
                     assistant_text = msg.content.clone();
@@ -139,8 +139,8 @@ pub async fn execute(client: &OllamaClient, args: ChatArgs) -> Result<()> {
             println!("🤖 Response:");
             println!("----------------------------------------");
 
-            let mut stream = client.post_stream("/api/chat", &request).await?;
-            while let Some(chunk) = stream.next_json::<ChatResponse>().await? {
+            let mut stream = client.chat_stream(&request).await?;
+            while let Some(chunk) = stream.next_chunk().await? {
                 if let Some(err) = &chunk.error {
                     anyhow::bail!("Chat failed: {}", err);
                 }
@@ -154,7 +154,7 @@ pub async fn execute(client: &OllamaClient, args: ChatArgs) -> Result<()> {
                 }
             }
         } else {
-            let response: ChatResponse = client.post("/api/chat", &request).await?;
+            let response = client.chat(&request).await?;
             if let Some(err) = &response.error {
                 anyhow::bail!("Chat failed: {}", err);
             }

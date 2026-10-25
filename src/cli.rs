@@ -1,6 +1,8 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 
+use crate::config::BackendKind;
+
 #[derive(Parser)]
 #[command(
     name = "ollama-cli",
@@ -8,7 +10,7 @@ use clap::{Parser, Subcommand};
     version
 )]
 pub struct Cli {
-    /// Override the default Ollama URL
+    /// Override the URL with a plain Ollama URL (ignores the active profile's kind and key)
     #[arg(short = 'u', long = "url", global = true)]
     pub url: Option<String>,
 
@@ -242,12 +244,21 @@ pub enum ConfigAction {
     Show,
     /// List all configured URLs
     List,
-    /// Add a named URL configuration
+    /// Add (or replace) a named URL profile
     Add {
         /// Name for this URL
         name: String,
         /// URL value
         url: String,
+        /// API the URL speaks: "ollama" or "openai" (OpenAI-compatible, e.g. LiteLLM)
+        #[arg(long, value_enum, default_value = "ollama")]
+        kind: BackendKind,
+        /// API key, stored in the config file (sent as a Bearer token)
+        #[arg(long, conflicts_with = "api_key_env")]
+        api_key: Option<String>,
+        /// Environment variable to read the API key from at runtime
+        #[arg(long)]
+        api_key_env: Option<String>,
     },
     /// Switch to a named URL
     Use {

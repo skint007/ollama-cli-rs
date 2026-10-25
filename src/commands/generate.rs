@@ -1,7 +1,7 @@
 use anyhow::Result;
 use std::io::Write;
 
-use crate::api::types::{GenerateRequest, GenerateResponse};
+use crate::api::types::GenerateRequest;
 use crate::cli::{resolve_model, resolve_text};
 use crate::client::OllamaClient;
 use crate::format::{nanos_to_secs, tokens_per_sec};
@@ -60,9 +60,9 @@ pub async fn execute(client: &OllamaClient, args: GenerateArgs) -> Result<()> {
         println!("🤖 Response:");
         println!("----------------------------------------");
 
-        let mut stream = client.post_stream("/api/generate", &request).await?;
+        let mut stream = client.generate_stream(&request).await?;
 
-        while let Some(chunk) = stream.next_json::<GenerateResponse>().await? {
+        while let Some(chunk) = stream.next_chunk().await? {
             if let Some(err) = &chunk.error {
                 anyhow::bail!("Generation failed: {}", err);
             }
@@ -83,7 +83,7 @@ pub async fn execute(client: &OllamaClient, args: GenerateArgs) -> Result<()> {
             }
         }
     } else {
-        let response: GenerateResponse = client.post("/api/generate", &request).await?;
+        let response = client.generate(&request).await?;
 
         if let Some(err) = &response.error {
             anyhow::bail!("Generation failed: {}", err);
