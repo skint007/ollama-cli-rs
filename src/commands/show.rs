@@ -4,6 +4,8 @@ use crate::api::types::{ShowRequest, ShowResponse};
 use crate::client::OllamaClient;
 
 pub async fn execute(client: &OllamaClient, model: &str, verbose: bool) -> Result<()> {
+    client.require_ollama("Showing model details")?;
+
     println!("Model information for: {}", model);
     println!("URL: {}", client.url());
     println!();

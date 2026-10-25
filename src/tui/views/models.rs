@@ -52,7 +52,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
             let details = model.details.as_ref();
             Row::new(vec![
                 Cell::from(model.name.clone()),
-                Cell::from(format::bytes_to_human(model.size)),
+                Cell::from(model.size.map(format::bytes_to_human).unwrap_or_default()),
                 Cell::from(
                     details
                         .and_then(|d| d.family.clone())

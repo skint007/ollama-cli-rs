@@ -1,7 +1,6 @@
 use anyhow::Result;
 use comfy_table::{Cell, Table};
 
-use crate::api::types::TagsResponse;
 use crate::client::OllamaClient;
 use crate::format::{bytes_to_human, format_datetime};
 
@@ -9,9 +8,9 @@ pub async fn execute(client: &OllamaClient) -> Result<()> {
     println!("Listing models from: {}", client.url());
     println!();
 
-    let response: TagsResponse = client.get("/api/tags").await?;
+    let models = client.list_models().await?;
 
-    if response.models.is_empty() {
+    if models.is_empty() {
         println!("No models found.");
         return Ok(());
     }
@@ -24,11 +23,17 @@ pub async fn execute(client: &OllamaClient) -> Result<()> {
         Cell::new("MODIFIED"),
     ]);
 
-    for model in &response.models {
+    for model in &models {
         table.add_row(vec![
             Cell::new(&model.name),
-            Cell::new(bytes_to_human(model.size)),
-            Cell::new(format_datetime(&model.modified_at)),
+            Cell::new(model.size.map(bytes_to_human).unwrap_or_else(|| "-".to_string())),
+            Cell::new(
+                model
+                    .modified_at
+                    .as_deref()
+                    .map(format_datetime)
+                    .unwrap_or_else(|| "-".to_string()),
+            ),
         ]);
     }
 

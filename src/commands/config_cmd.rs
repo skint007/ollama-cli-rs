@@ -1,13 +1,28 @@
 use anyhow::Result;
 
 use crate::cli::ConfigAction;
-use crate::config::Config;
+use crate::config::{BackendKind, Config, Profile};
 
 pub fn execute(action: Option<ConfigAction>, config: &mut Config) -> Result<()> {
     match action {
         None | Some(ConfigAction::Show) => show(config),
         Some(ConfigAction::List) => list(config),
-        Some(ConfigAction::Add { name, url }) => add(config, &name, &url),
+        Some(ConfigAction::Add {
+            name,
+            url,
+            kind,
+            api_key,
+            api_key_env,
+        }) => add(
+            config,
+            &name,
+            Profile {
+                url,
+                kind,
+                api_key,
+                api_key_env,
+            },
+        ),
         Some(ConfigAction::Use { name }) => use_profile(config, &name),
         Some(ConfigAction::Remove { name }) => remove(config, &name),
         Some(ConfigAction::Set { key, value }) => set(config, &key, &value),
@@ -31,14 +46,14 @@ fn show(config: &Config) -> Result<()> {
     println!();
     println!("Configured URLs:");
 
-    if config.urls.is_empty() {
+    if config.profiles.is_empty() {
         println!("  (none)");
     } else {
-        for (name, url) in &config.urls {
+        for (name, profile) in &config.profiles {
             if Some(name.as_str()) == config.active_profile.as_deref() {
-                println!("  ➜ {}: {} (active)", name, url);
+                println!("  ➜ {}: {} (active)", name, describe(profile));
             } else {
-                println!("    {}: {}", name, url);
+                println!("    {}: {}", name, describe(profile));
             }
         }
     }
@@ -47,7 +62,7 @@ fn show(config: &Config) -> Result<()> {
 }
 
 fn list(config: &Config) -> Result<()> {
-    if config.urls.is_empty() {
+    if config.profiles.is_empty() {
         println!("No URLs configured yet.");
         println!();
         println!("Add a URL with: ollama-cli config add <name> <url>");
@@ -57,32 +72,49 @@ fn list(config: &Config) -> Result<()> {
     println!("Configured URLs:");
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
 
-    for (name, url) in &config.urls {
+    for (name, profile) in &config.profiles {
         if Some(name.as_str()) == config.active_profile.as_deref() {
-            println!("➜ {}: {} (active)", name, url);
+            println!("➜ {}: {} (active)", name, describe(profile));
         } else {
-            println!("  {}: {}", name, url);
+            println!("  {}: {}", name, describe(profile));
         }
     }
 
     Ok(())
 }
 
-fn add(config: &mut Config, name: &str, url: &str) -> Result<()> {
-    if !url.starts_with("http://") && !url.starts_with("https://") {
+/// "url" plus kind and key source for non-default setups; never shows the key itself
+fn describe(profile: &Profile) -> String {
+    let mut tags = Vec::new();
+    if profile.kind != BackendKind::Ollama {
+        tags.push(profile.kind.as_str().to_string());
+    }
+    if let Some(source) = profile.key_source() {
+        tags.push(format!("key: {}", source));
+    }
+    if tags.is_empty() {
+        profile.url.clone()
+    } else {
+        format!("{} [{}]", profile.url, tags.join(", "))
+    }
+}
+
+fn add(config: &mut Config, name: &str, profile: Profile) -> Result<()> {
+    if !profile.url.starts_with("http://") && !profile.url.starts_with("https://") {
         anyhow::bail!("URL must start with http:// or https://");
     }
 
-    if config.urls.contains_key(name) {
+    if config.profiles.contains_key(name) {
         println!("⚠️  URL '{}' already exists. Updating...", name);
     }
 
-    config.urls.insert(name.to_string(), url.to_string());
+    let url = profile.url.clone();
+    config.profiles.insert(name.to_string(), profile);
 
     // If this is the first URL, make it active
     if config.active_profile.is_none() {
         config.active_profile = Some(name.to_string());
-        config.default_url = url.to_string();
+        config.default_url = url;
         config.save()?;
         println!("✅ Added URL '{}' and set as active", name);
     } else {
@@ -95,8 +127,8 @@ fn add(config: &mut Config, name: &str, url: &str) -> Result<()> {
 }
 
 fn use_profile(config: &mut Config, name: &str) -> Result<()> {
-    if let Some(url) = config.urls.get(name) {
-        let url = url.clone();
+    if let Some(profile) = config.profiles.get(name) {
+        let url = profile.url.clone();
         config.active_profile = Some(name.to_string());
         config.default_url = url.clone();
         config.save()?;
@@ -106,7 +138,7 @@ fn use_profile(config: &mut Config, name: &str) -> Result<()> {
         eprintln!("Error: URL '{}' not found", name);
         eprintln!();
         eprintln!("Available URLs:");
-        for name in config.urls.keys() {
+        for name in config.profiles.keys() {
             eprintln!("  {}", name);
         }
         std::process::exit(1);
@@ -116,7 +148,7 @@ fn use_profile(config: &mut Config, name: &str) -> Result<()> {
 }
 
 fn remove(config: &mut Config, name: &str) -> Result<()> {
-    if !config.urls.contains_key(name) {
+    if !config.profiles.contains_key(name) {
         anyhow::bail!("URL '{}' not found", name);
     }
 
@@ -127,7 +159,7 @@ fn remove(config: &mut Config, name: &str) -> Result<()> {
         );
     }
 
-    config.urls.remove(name);
+    config.profiles.remove(name);
     config.save()?;
     println!("✅ Removed URL '{}'", name);
 

@@ -100,6 +100,7 @@ ollama-cli benchmark model1 model2 --csv # Export results to CSV
 ```bash
 ollama-cli config show                   # Show current config
 ollama-cli config add prod https://...   # Add a named profile
+ollama-cli config add litellm http://host:4000 --kind openai --api-key-env LITELLM_API_KEY
 ollama-cli config use prod               # Switch active profile
 ollama-cli config list                   # List all profiles
 ollama-cli config remove prod            # Remove a profile
@@ -108,18 +109,35 @@ ollama-cli config reset                  # Reset to defaults
 
 ## Configuration
 
-Config is stored at `~/.config/ollama-cli/config.toml`:
+Config is stored at `~/.config/ollama-cli/config.toml` (written with `0600` permissions):
 
 ```toml
 default_url = "http://localhost:11434"
 active_profile = "local"
 
-[urls]
-local = "http://localhost:11434"
-remote = "https://ollama.example.com"
+[profiles.local]
+url = "http://localhost:11434"
+kind = "ollama"
+
+[profiles.litellm]
+url = "http://litellm.example.com:4000"   # with or without the /v1 suffix
+kind = "openai"
+api_key_env = "LITELLM_API_KEY"           # or: api_key = "sk-..."
 ```
 
-**URL resolution order:** `--url` flag > active profile > default_url
+**URL resolution order:** `--url` flag > active profile > default_url. A `--url` override is always treated as a plain Ollama URL with no API key.
+
+Older configs with a `[urls]` table still load; those entries become `ollama` profiles and are rewritten as `[profiles.*]` the next time the config is saved.
+
+### OpenAI-compatible backends (LiteLLM, etc.)
+
+Profiles with `kind = "openai"` talk to `/v1/models`, `/v1/chat/completions` and `/v1/embeddings`, sending the API key as a `Bearer` token. `list`, `chat`, `generate`, `embed`, `benchmark` and the TUI chat/models views work as usual:
+
+- `generate` runs through chat completions (`--system` becomes a system message); `--template`, `--context` and `--raw` are rejected.
+- `--options` keys are sent as top-level params (`num_predict` is renamed to `max_tokens`); `--format json` maps to `response_format`.
+- Tokens/sec is measured client-side. Streaming uses the backend's reported token count (`stream_options.include_usage`); non-streaming (including `benchmark`) divides by total request time, so it reads lower than Ollama's figure.
+
+Ollama-only features (`pull`, `push`, `create`, `copy`, `rm`, `show`, `ps`, `unload`) report that they aren't supported. The TUI's "add profile" flow creates Ollama profiles; use `config add --kind openai` for OpenAI ones.
 
 ## License
 

@@ -2,7 +2,7 @@ use anyhow::Result;
 use comfy_table::{Cell, Table};
 use std::time::Instant;
 
-use crate::api::types::{GenerateRequest, GenerateResponse};
+use crate::api::types::GenerateRequest;
 use crate::client::OllamaClient;
 use crate::format::{nanos_to_secs, tokens_per_sec};
 
@@ -65,10 +65,7 @@ pub async fn execute(
                 ..Default::default()
             };
 
-            match client
-                .post::<_, GenerateResponse>("/api/generate", &request)
-                .await
-            {
+            match client.generate(&request).await {
                 Ok(response) => {
                     if let (Some(count), Some(eval_dur)) =
                         (response.eval_count, response.eval_duration)
@@ -155,8 +152,8 @@ pub async fn execute(
             });
         }
 
-        // Unload model between tests
-        if !no_unload {
+        // Unload model between tests (OpenAI backends can't unload)
+        if !no_unload && client.supports_ollama_api() {
             println!("   🧹 Unloading model...");
             let unload_req = GenerateRequest {
                 model: model.clone(),

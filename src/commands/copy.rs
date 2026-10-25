@@ -4,6 +4,8 @@ use crate::api::types::CopyRequest;
 use crate::client::OllamaClient;
 
 pub async fn execute(client: &OllamaClient, source: &str, destination: &str) -> Result<()> {
+    client.require_ollama("Copying models")?;
+
     println!("Copying model: {} → {}", source, destination);
     println!("URL: {}", client.url());
     println!();

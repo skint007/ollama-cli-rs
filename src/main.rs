@@ -15,45 +15,38 @@ use client::OllamaClient;
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     let mut cfg = config::Config::load()?;
-    let url = cfg.resolve_url(cli.url.as_deref());
+    let url = cli.url;
 
     match cli.command {
         Commands::List => {
-            let client = OllamaClient::new(&url);
-            client.test_connection().await?;
+            let client = connect(&cfg, url.as_deref()).await?;
             commands::list::execute(&client).await?;
         }
         Commands::Ps => {
-            let client = OllamaClient::new(&url);
-            client.test_connection().await?;
+            let client = connect(&cfg, url.as_deref()).await?;
             commands::ps::execute(&client).await?;
         }
         Commands::Pull { model } => {
-            let client = OllamaClient::new(&url);
-            client.test_connection().await?;
+            let client = connect(&cfg, url.as_deref()).await?;
             commands::pull::execute(&client, &model).await?;
         }
         Commands::Remove { model } => {
-            let client = OllamaClient::new(&url);
-            client.test_connection().await?;
+            let client = connect(&cfg, url.as_deref()).await?;
             commands::remove::execute(&client, &model).await?;
         }
         Commands::Unload { model } => {
-            let client = OllamaClient::new(&url);
-            client.test_connection().await?;
+            let client = connect(&cfg, url.as_deref()).await?;
             commands::unload::execute(&client, &model).await?;
         }
         Commands::Show { model, verbose } => {
-            let client = OllamaClient::new(&url);
-            client.test_connection().await?;
+            let client = connect(&cfg, url.as_deref()).await?;
             commands::show::execute(&client, &model, verbose).await?;
         }
         Commands::Copy {
             source,
             destination,
         } => {
-            let client = OllamaClient::new(&url);
-            client.test_connection().await?;
+            let client = connect(&cfg, url.as_deref()).await?;
             commands::copy::execute(&client, &source, &destination).await?;
         }
         Commands::Create {
@@ -64,8 +57,7 @@ async fn main() -> anyhow::Result<()> {
             quantize,
             no_stream,
         } => {
-            let client = OllamaClient::new(&url);
-            client.test_connection().await?;
+            let client = connect(&cfg, url.as_deref()).await?;
             commands::create::execute(
                 &client,
                 commands::create::CreateArgs {
@@ -84,8 +76,7 @@ async fn main() -> anyhow::Result<()> {
             insecure,
             no_stream,
         } => {
-            let client = OllamaClient::new(&url);
-            client.test_connection().await?;
+            let client = connect(&cfg, url.as_deref()).await?;
             commands::push::execute(&client, &model, insecure, no_stream).await?;
         }
         Commands::Generate {
@@ -102,8 +93,7 @@ async fn main() -> anyhow::Result<()> {
             context,
             raw,
         } => {
-            let client = OllamaClient::new(&url);
-            client.test_connection().await?;
+            let client = connect(&cfg, url.as_deref()).await?;
             commands::generate::execute(
                 &client,
                 commands::generate::GenerateArgs {
@@ -135,8 +125,7 @@ async fn main() -> anyhow::Result<()> {
             format,
             options,
         } => {
-            let client = OllamaClient::new(&url);
-            client.test_connection().await?;
+            let client = connect(&cfg, url.as_deref()).await?;
             commands::chat::execute(
                 &client,
                 commands::chat::ChatArgs {
@@ -163,8 +152,7 @@ async fn main() -> anyhow::Result<()> {
             no_truncate,
             options,
         } => {
-            let client = OllamaClient::new(&url);
-            client.test_connection().await?;
+            let client = connect(&cfg, url.as_deref()).await?;
             commands::embed::execute(
                 &client,
                 commands::embed::EmbedArgs {
@@ -186,8 +174,7 @@ async fn main() -> anyhow::Result<()> {
             csv,
             no_unload,
         } => {
-            let client = OllamaClient::new(&url);
-            client.test_connection().await?;
+            let client = connect(&cfg, url.as_deref()).await?;
             commands::benchmark::execute(
                 &client,
                 &models,
@@ -210,10 +197,17 @@ async fn main() -> anyhow::Result<()> {
             commands::config_cmd::execute(action, &mut cfg)?;
         }
         Commands::Tui => {
-            let client = OllamaClient::new(&url);
+            let client = OllamaClient::new(&cfg.resolve_endpoint(url.as_deref())?)?;
             tui::run(client, cfg).await?;
         }
     }
 
     Ok(())
+}
+
+/// Build a client for the effective endpoint and check it is reachable
+async fn connect(cfg: &config::Config, url_override: Option<&str>) -> anyhow::Result<OllamaClient> {
+    let client = OllamaClient::new(&cfg.resolve_endpoint(url_override)?)?;
+    client.test_connection().await?;
+    Ok(client)
 }

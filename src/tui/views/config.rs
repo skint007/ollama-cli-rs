@@ -6,6 +6,7 @@ use ratatui::{
     Frame,
 };
 
+use crate::config::BackendKind;
 use crate::tui::app::{App, Focus};
 use crate::tui::theme::theme;
 
@@ -101,7 +102,7 @@ fn render_profiles(frame: &mut Frame, area: Rect, app: &mut App) {
         .config_state
         .profiles
         .iter()
-        .map(|(name, url)| {
+        .map(|(name, profile)| {
             let is_active = active == Some(name.as_str());
             let indicator = if is_active { "* " } else { "  " };
             let name_style = if is_active {
@@ -112,12 +113,18 @@ fn render_profiles(frame: &mut Frame, area: Rect, app: &mut App) {
                 Style::default()
             };
 
-            let line = Line::from(vec![
+            let mut line = Line::from(vec![
                 Span::styled(indicator, name_style),
                 Span::styled(name, name_style),
                 Span::styled("  ", Style::default()),
-                Span::styled(url, Style::new().fg(Color::DarkGray)),
+                Span::styled(&profile.url, Style::new().fg(Color::DarkGray)),
             ]);
+            if profile.kind != BackendKind::Ollama {
+                line.push_span(Span::styled(
+                    format!("  [{}]", profile.kind.as_str()),
+                    Style::new().fg(Color::Cyan),
+                ));
+            }
             ListItem::new(line)
         })
         .collect();

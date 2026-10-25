@@ -6,11 +6,11 @@ use tui_textarea::TextArea;
 use std::collections::HashMap;
 
 use crate::api::types::{
-    ChatMessage, ChatRequest, ChatResponse, CopyRequest, DeleteRequest, GenerateRequest,
-    ModelInfo, ProgressResponse, PsResponse, RunningModel, ShowRequest, ShowResponse, TagsResponse,
+    ChatMessage, ChatRequest, CopyRequest, DeleteRequest, GenerateRequest, ModelInfo,
+    ProgressResponse, PsResponse, RunningModel, ShowRequest, ShowResponse,
 };
 use crate::client::OllamaClient;
-use crate::config::Config;
+use crate::config::{Config, Profile};
 
 use super::action::Action;
 use super::event::ApiEvent;
@@ -89,7 +89,7 @@ pub struct RunningState {
 }
 
 pub struct ConfigState {
-    pub profiles: Vec<(String, String)>, // (name, url) pairs
+    pub profiles: Vec<(String, Profile)>,
     pub list_state: ListState,
 }
 
@@ -808,7 +808,21 @@ impl App {
         }
     }
 
+    /// Returns false (and shows why) if `feature` needs the native Ollama API
+    fn ollama_only(&mut self, feature: &str) -> bool {
+        match self.client.require_ollama(feature) {
+            Ok(()) => true,
+            Err(e) => {
+                self.status_message = Some((e.to_string(), Instant::now()));
+                false
+            }
+        }
+    }
+
     fn open_pull_input(&mut self) {
+        if !self.ollama_only("Pulling models") {
+            return;
+        }
         self.text_input = Some(TextInputState {
             title: "Pull Model".to_string(),
             prompt: "Enter model name (e.g. llama3.2, mistral:7b):".to_string(),
@@ -818,6 +832,9 @@ impl App {
     }
 
     fn open_copy_input(&mut self) {
+        if !self.ollama_only("Copying models") {
+            return;
+        }
         let name = if let Some(idx) = self.models.table_state.selected() {
             self.models.models.get(idx).map(|m| m.name.clone())
         } else {
@@ -838,6 +855,9 @@ impl App {
     }
 
     fn pull_model(&mut self, name: &str) {
+        if !self.ollama_only("Pulling models") {
+            return;
+        }
         let model_name = name.to_string();
 
         self.pull = Some(PullState {
@@ -891,6 +911,9 @@ impl App {
     }
 
     fn copy_model(&mut self, source: &str, destination: &str) {
+        if !self.ollama_only("Copying models") {
+            return;
+        }
         let client = self.client.clone();
         let tx = self.api_tx.clone();
         let src = source.to_string();
@@ -932,6 +955,9 @@ impl App {
     // === Model actions ===
 
     fn show_model_detail(&mut self) {
+        if !self.ollama_only("Showing model details") {
+            return;
+        }
         let name = if let Some(idx) = self.models.table_state.selected() {
             self.models.models.get(idx).map(|m| m.name.clone())
         } else {
@@ -975,6 +1001,9 @@ impl App {
     }
 
     fn confirm_delete_model(&mut self) {
+        if !self.ollama_only("Deleting models") {
+            return;
+        }
         let name = if let Some(idx) = self.models.table_state.selected() {
             self.models.models.get(idx).map(|m| m.name.clone())
         } else {
@@ -994,6 +1023,9 @@ impl App {
     }
 
     fn confirm_unload_model(&mut self) {
+        if !self.ollama_only("Unloading models") {
+            return;
+        }
         let name = if let Some(idx) = self.running.table_state.selected() {
             self.running.models.get(idx).map(|m| m.name.clone())
         } else {
@@ -1094,9 +1126,9 @@ impl App {
     fn refresh_config_profiles(&mut self) {
         self.config_state.profiles = self
             .config
-            .urls
+            .profiles
             .iter()
-            .map(|(name, url)| (name.clone(), url.clone()))
+            .map(|(name, profile)| (name.clone(), profile.clone()))
             .collect();
         if self.config_state.list_state.selected().is_none()
             && !self.config_state.profiles.is_empty()
@@ -1124,8 +1156,8 @@ impl App {
         }
 
         self.config
-            .urls
-            .insert(name.to_string(), url.to_string());
+            .profiles
+            .insert(name.to_string(), Profile::ollama(url));
 
         // If this is the first profile, make it active
         if self.config.active_profile.is_none() {
@@ -1178,7 +1210,7 @@ impl App {
     }
 
     fn config_do_remove(&mut self, name: &str) {
-        self.config.urls.remove(name);
+        self.config.profiles.remove(name);
         match self.config.save() {
             Ok(()) => {
                 self.status_message = Some((
@@ -1201,24 +1233,37 @@ impl App {
             self.config_state
                 .profiles
                 .get(idx)
-                .map(|(n, u)| (n.clone(), u.clone()))
+                .map(|(n, p)| (n.clone(), p.clone()))
         } else {
             None
         };
 
-        let Some((name, url)) = selected else {
+        let Some((name, profile)) = selected else {
             self.status_message = Some(("No profile selected".to_string(), Instant::now()));
             return;
         };
+
+        // Build the client first so a bad key/env var leaves the current profile active
+        let client = match profile.endpoint().and_then(|e| OllamaClient::new(&e)) {
+            Ok(client) => client,
+            Err(e) => {
+                self.status_message =
+                    Some((format!("Cannot switch to '{}': {}", name, e), Instant::now()));
+                return;
+            }
+        };
+        let url = profile.url;
 
         self.config.active_profile = Some(name.clone());
         self.config.default_url = url.clone();
 
         match self.config.save() {
             Ok(()) => {
-                // Reconnect with the new URL
-                self.client = OllamaClient::new(&url);
+                // Reconnect with the new profile; models from the old one may not exist here
+                self.client = client;
                 self.connected = false;
+                self.chat.current_model = None;
+                self.running.models.clear();
                 self.test_connection();
                 self.fetch_models();
                 self.status_message = Some((
@@ -1240,17 +1285,25 @@ impl App {
             self.config_state
                 .profiles
                 .get(idx)
-                .map(|(n, u)| (n.clone(), u.clone()))
+                .map(|(n, p)| (n.clone(), p.clone()))
         } else {
             None
         };
 
-        let Some((name, url)) = selected else {
+        let Some((name, profile)) = selected else {
             self.status_message = Some(("No profile selected".to_string(), Instant::now()));
             return;
         };
 
-        let test_client = OllamaClient::new(&url);
+        let test_client = match profile.endpoint().and_then(|e| OllamaClient::new(&e)) {
+            Ok(client) => client,
+            Err(e) => {
+                self.status_message =
+                    Some((format!("Profile '{}': {}", name, e), Instant::now()));
+                return;
+            }
+        };
+        let url = profile.url;
         let tx = self.api_tx.clone();
         let name_display = name.clone();
 
@@ -1332,6 +1385,9 @@ impl App {
     }
 
     fn library_pull_selected(&mut self) {
+        if !self.ollama_only("Pulling models") {
+            return;
+        }
         let idx = self.library.list_state.selected();
         let model_name = idx
             .and_then(|i| self.library.filtered.get(i).copied())
@@ -1591,9 +1647,9 @@ impl App {
         let tx = self.api_tx.clone();
 
         tokio::spawn(async move {
-            match client.post_stream("/api/chat", &request).await {
+            match client.chat_stream(&request).await {
                 Ok(mut stream) => {
-                    while let Ok(Some(chunk)) = stream.next_json::<ChatResponse>().await {
+                    while let Ok(Some(chunk)) = stream.next_chunk().await {
                         if let Some(err) = &chunk.error {
                             let _ = tx.send(ApiEvent::ChatError(err.clone()));
                             return;
@@ -1799,9 +1855,9 @@ impl App {
         let tx = self.api_tx.clone();
 
         tokio::spawn(async move {
-            match client.get::<TagsResponse>("/api/tags").await {
-                Ok(resp) => {
-                    let _ = tx.send(ApiEvent::ModelsLoaded(resp.models));
+            match client.list_models().await {
+                Ok(models) => {
+                    let _ = tx.send(ApiEvent::ModelsLoaded(models));
                 }
                 Err(e) => {
                     let _ = tx.send(ApiEvent::Error(format!("Failed to fetch models: {}", e)));
@@ -1811,6 +1867,9 @@ impl App {
     }
 
     pub fn fetch_running(&mut self) {
+        if !self.ollama_only("Listing running models") {
+            return;
+        }
         self.running.loading = true;
         let client = self.client.clone();
         let tx = self.api_tx.clone();
@@ -1996,10 +2055,7 @@ async fn run_benchmarks(
                 ..Default::default()
             };
 
-            match client
-                .post::<_, crate::api::types::GenerateResponse>("/api/generate", &request)
-                .await
-            {
+            match client.generate(&request).await {
                 Ok(response) => {
                     if let (Some(count), Some(eval_dur)) =
                         (response.eval_count, response.eval_duration)
@@ -2050,15 +2106,17 @@ async fn run_benchmarks(
 
         let _ = tx.send(ApiEvent::BenchmarkModelDone(result));
 
-        // Unload model between tests
-        let unload_req = GenerateRequest {
-            model: model.clone(),
-            prompt: String::new(),
-            stream: false,
-            keep_alive: Some(0),
-            ..Default::default()
-        };
-        let _ = client.post_raw("/api/generate", &unload_req).await;
+        // Unload model between tests (OpenAI backends can't unload)
+        if client.supports_ollama_api() {
+            let unload_req = GenerateRequest {
+                model: model.clone(),
+                prompt: String::new(),
+                stream: false,
+                keep_alive: Some(0),
+                ..Default::default()
+            };
+            let _ = client.post_raw("/api/generate", &unload_req).await;
+        }
     }
 
     let _ = tx.send(ApiEvent::BenchmarkComplete);

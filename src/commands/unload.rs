@@ -4,6 +4,8 @@ use crate::api::types::GenerateRequest;
 use crate::client::OllamaClient;
 
 pub async fn execute(client: &OllamaClient, model: &str) -> Result<()> {
+    client.require_ollama("Unloading models")?;
+
     println!("Unloading model: {}", model);
     println!("URL: {}", client.url());
     println!();

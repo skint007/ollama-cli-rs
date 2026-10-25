@@ -12,8 +12,9 @@ pub struct TagsResponse {
 #[derive(Debug, Deserialize)]
 pub struct ModelInfo {
     pub name: String,
-    pub size: u64,
-    pub modified_at: String,
+    /// Absent for OpenAI-compatible backends
+    pub size: Option<u64>,
+    pub modified_at: Option<String>,
     pub digest: Option<String>,
     pub details: Option<ModelDetails>,
 }
@@ -78,7 +79,7 @@ fn is_false(v: &bool) -> bool {
     !*v
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Default)]
 pub struct GenerateResponse {
     pub response: Option<String>,
     pub done: Option<bool>,
@@ -110,7 +111,7 @@ pub struct ChatRequest {
     pub options: Option<serde_json::Value>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Default)]
 pub struct ChatResponse {
     pub message: Option<ChatMessage>,
     pub done: Option<bool>,
@@ -118,6 +119,20 @@ pub struct ChatResponse {
     pub eval_duration: Option<u64>,
     pub total_duration: Option<u64>,
     pub error: Option<String>,
+}
+
+impl From<ChatResponse> for GenerateResponse {
+    fn from(chat: ChatResponse) -> Self {
+        GenerateResponse {
+            response: chat.message.map(|m| m.content),
+            done: chat.done,
+            eval_count: chat.eval_count,
+            eval_duration: chat.eval_duration,
+            total_duration: chat.total_duration,
+            error: chat.error,
+            ..Default::default()
+        }
+    }
 }
 
 // === Embed (POST /api/embed) ===
@@ -200,7 +215,24 @@ pub struct PushRequest {
 
 // === Common error response ===
 
-#[derive(Debug, Deserialize)]
-pub struct ErrorResponse {
-    pub error: String,
+/// Extract a human-readable message from an error body. Handles both Ollama's
+/// `{"error": "..."}` and OpenAI's `{"error": {"message": "..."}}`, falling back
+/// to the raw body.
+pub fn error_message(body: &str) -> String {
+    serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|v| v.get("error").map(error_text))
+        .unwrap_or_else(|| body.to_string())
+}
+
+/// Render an `error` field value (string or OpenAI-style object) as text
+pub fn error_text(error: &serde_json::Value) -> String {
+    match error {
+        serde_json::Value::String(s) => s.clone(),
+        other => other
+            .get("message")
+            .and_then(|m| m.as_str())
+            .map(str::to_string)
+            .unwrap_or_else(|| other.to_string()),
+    }
 }

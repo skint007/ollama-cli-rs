@@ -6,6 +6,8 @@ use crate::client::OllamaClient;
 use crate::format::{bytes_to_human, format_datetime};
 
 pub async fn execute(client: &OllamaClient) -> Result<()> {
+    client.require_ollama("Listing running models")?;
+
     println!("Running models on: {}", client.url());
     println!();
 
