@@ -4,8 +4,6 @@ use crate::api::types::{error_message, DeleteRequest};
 use crate::client::OllamaClient;
 
 pub async fn execute(client: &OllamaClient, model: &str) -> Result<()> {
-    client.require_ollama("Removing models")?;
-
     let confirm = inquire::Confirm::new(&format!("Are you sure you want to remove model '{}'?", model))
         .with_default(false)
         .prompt()?;

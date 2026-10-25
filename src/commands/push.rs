@@ -11,8 +11,6 @@ pub async fn execute(
     insecure: bool,
     no_stream: bool,
 ) -> Result<()> {
-    client.require_ollama("Pushing models")?;
-
     println!("Pushing model: {}", model);
     println!("URL: {}", client.url());
     println!();

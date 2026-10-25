@@ -81,6 +81,18 @@ impl Profile {
     }
 }
 
+/// Fail with a clear message if `feature` needs the native Ollama API
+pub fn require_ollama(kind: BackendKind, url: &str, feature: &str) -> Result<()> {
+    if kind != BackendKind::Ollama {
+        anyhow::bail!(
+            "{} is not supported by OpenAI-compatible backends ({})",
+            feature,
+            url
+        );
+    }
+    Ok(())
+}
+
 /// Everything needed to talk to a backend
 #[derive(Debug, Clone)]
 pub struct Endpoint {

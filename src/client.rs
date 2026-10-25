@@ -95,14 +95,7 @@ impl OllamaClient {
 
     /// Fail with a clear message if `feature` needs the native Ollama API
     pub fn require_ollama(&self, feature: &str) -> Result<()> {
-        if !self.supports_ollama_api() {
-            anyhow::bail!(
-                "{} is not supported by OpenAI-compatible backends ({})",
-                feature,
-                self.base_url
-            );
-        }
-        Ok(())
+        crate::config::require_ollama(self.kind, &self.base_url, feature)
     }
 
     // === Backend-agnostic operations ===

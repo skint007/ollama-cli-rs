@@ -6,8 +6,6 @@ use crate::api::types::ProgressResponse;
 use crate::client::OllamaClient;
 
 pub async fn execute(client: &OllamaClient, model: &str) -> Result<()> {
-    client.require_ollama("Pulling models")?;
-
     println!("Pulling model: {}", model);
     println!("URL: {}", client.url());
     println!();

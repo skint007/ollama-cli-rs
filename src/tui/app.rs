@@ -1155,6 +1155,18 @@ impl App {
             return;
         }
 
+        // Replacing would silently drop the existing profile's kind and API key
+        if self.config.profiles.contains_key(name) {
+            self.status_message = Some((
+                format!(
+                    "Profile '{}' already exists. Remove it first, or use `ollama-cli config add` to replace it.",
+                    name
+                ),
+                Instant::now(),
+            ));
+            return;
+        }
+
         self.config
             .profiles
             .insert(name.to_string(), Profile::ollama(url));

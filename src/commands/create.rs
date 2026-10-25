@@ -13,8 +13,6 @@ pub struct CreateArgs {
 }
 
 pub async fn execute(client: &OllamaClient, args: CreateArgs) -> Result<()> {
-    client.require_ollama("Creating models")?;
-
     // If JSON file provided, send it directly
     if let Some(json_path) = &args.json_file {
         let json_content = std::fs::read_to_string(json_path)

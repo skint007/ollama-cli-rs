@@ -37,16 +37,17 @@ pub async fn run(
 
     // Create app state
     let mut app = App::new(client, config, api_tx);
-    if let Some(err) = startup_error {
-        app.status_message = Some((err, std::time::Instant::now()));
-    }
 
     // Create event handler
     let mut events = EventHandler::new(api_rx, 250);
 
-    // Initial data fetches
+    // Initial data fetches. With a startup error the client has no key, so a
+    // model fetch would only fail and replace the error with a vaguer one.
     app.test_connection();
-    app.fetch_models();
+    match startup_error {
+        Some(err) => app.status_message = Some((err, std::time::Instant::now())),
+        None => app.fetch_models(),
+    }
 
     // Main loop
     loop {
