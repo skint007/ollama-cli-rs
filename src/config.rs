@@ -67,10 +67,17 @@ impl Profile {
             None => self.api_key.clone(),
         };
         Ok(Endpoint {
+            api_key,
+            ..self.endpoint_without_key()
+        })
+    }
+
+    pub fn endpoint_without_key(&self) -> Endpoint {
+        Endpoint {
             url: self.url.clone(),
             kind: self.kind,
-            api_key,
-        })
+            api_key: None,
+        }
     }
 }
 
@@ -141,6 +148,7 @@ impl Config {
             let mut config: Config =
                 toml::from_str(&contents).context("Failed to parse config file")?;
             config.fold_legacy_urls();
+            config.warn_if_key_exposed(&config_path);
             return Ok(config);
         }
 
@@ -191,6 +199,25 @@ impl Config {
         Ok(())
     }
 
+    /// Warn when a hand-edited config holds an API key but is readable by others
+    fn warn_if_key_exposed(&self, path: &std::path::Path) {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let has_key = self.profiles.values().any(|p| p.api_key.is_some());
+            let mode = std::fs::metadata(path).map(|m| m.permissions().mode());
+            if has_key && mode.is_ok_and(|m| m & 0o077 != 0) {
+                eprintln!(
+                    "Warning: {} contains an API key but is readable by other users.\n         Run: chmod 600 {}",
+                    path.display(),
+                    path.display()
+                );
+            }
+        }
+        #[cfg(not(unix))]
+        let _ = path;
+    }
+
     /// The active profile, if one is set and exists
     pub fn active(&self) -> Option<&Profile> {
         self.active_profile
@@ -218,6 +245,17 @@ impl Config {
         match self.active() {
             Some(profile) => profile.endpoint(),
             None => Ok(Endpoint::ollama(&self.default_url)),
+        }
+    }
+
+    /// Like `resolve_endpoint`, but never fails: the API key is left out
+    pub fn resolve_endpoint_without_key(&self, cli_override: Option<&str>) -> Endpoint {
+        if let Some(url) = cli_override {
+            return Endpoint::ollama(url);
+        }
+        match self.active() {
+            Some(profile) => profile.endpoint_without_key(),
+            None => Endpoint::ollama(&self.default_url),
         }
     }
 

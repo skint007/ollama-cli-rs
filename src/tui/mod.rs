@@ -24,7 +24,11 @@ use crate::config::Config;
 use app::App;
 use event::{Event, EventHandler};
 
-pub async fn run(client: OllamaClient, config: Config) -> Result<()> {
+pub async fn run(
+    client: OllamaClient,
+    config: Config,
+    startup_error: Option<String>,
+) -> Result<()> {
     // Setup terminal
     let mut terminal = setup_terminal()?;
 
@@ -33,6 +37,9 @@ pub async fn run(client: OllamaClient, config: Config) -> Result<()> {
 
     // Create app state
     let mut app = App::new(client, config, api_tx);
+    if let Some(err) = startup_error {
+        app.status_message = Some((err, std::time::Instant::now()));
+    }
 
     // Create event handler
     let mut events = EventHandler::new(api_rx, 250);

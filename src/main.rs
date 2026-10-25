@@ -197,8 +197,19 @@ async fn main() -> anyhow::Result<()> {
             commands::config_cmd::execute(action, &mut cfg)?;
         }
         Commands::Tui => {
-            let client = OllamaClient::new(&cfg.resolve_endpoint(url.as_deref())?)?;
-            tui::run(client, cfg).await?;
+            // A key problem shouldn't lock you out of the TUI's profile switcher:
+            // start without the key and show the error instead
+            let (client, startup_error) = match cfg
+                .resolve_endpoint(url.as_deref())
+                .and_then(|endpoint| OllamaClient::new(&endpoint))
+            {
+                Ok(client) => (client, None),
+                Err(e) => (
+                    OllamaClient::new(&cfg.resolve_endpoint_without_key(url.as_deref()))?,
+                    Some(e.to_string()),
+                ),
+            };
+            tui::run(client, cfg, startup_error).await?;
         }
     }
 

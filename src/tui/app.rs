@@ -1263,7 +1263,12 @@ impl App {
                 self.client = client;
                 self.connected = false;
                 self.chat.current_model = None;
+                self.models.models.clear();
+                self.models.table_state.select(None);
                 self.running.models.clear();
+                self.running.table_state.select(None);
+                self.benchmark.available_models.clear();
+                self.benchmark.selected_models.clear();
                 self.test_connection();
                 self.fetch_models();
                 self.status_message = Some((
@@ -1647,33 +1652,48 @@ impl App {
         let tx = self.api_tx.clone();
 
         tokio::spawn(async move {
-            match client.chat_stream(&request).await {
-                Ok(mut stream) => {
-                    while let Ok(Some(chunk)) = stream.next_chunk().await {
-                        if let Some(err) = &chunk.error {
-                            let _ = tx.send(ApiEvent::ChatError(err.clone()));
-                            return;
-                        }
-                        if let Some(msg) = &chunk.message {
-                            if !msg.content.is_empty() {
-                                let _ = tx.send(ApiEvent::ChatToken(msg.content.clone()));
-                            }
-                        }
-                        if chunk.done == Some(true) {
-                            let tokens_per_sec = chunk.eval_count
-                                .zip(chunk.eval_duration)
-                                .filter(|(_, dur)| *dur > 0)
-                                .map(|(count, dur)| {
-                                    use crate::format::tokens_per_sec;
-                                    tokens_per_sec(count, dur)
-                                });
-                            let _ = tx.send(ApiEvent::ChatDone { tokens_per_sec });
-                            return;
-                        }
-                    }
-                }
+            let mut stream = match client.chat_stream(&request).await {
+                Ok(stream) => stream,
                 Err(e) => {
                     let _ = tx.send(ApiEvent::ChatError(e.to_string()));
+                    return;
+                }
+            };
+            loop {
+                let chunk = match stream.next_chunk().await {
+                    Ok(Some(chunk)) => chunk,
+                    // Ended without a done chunk: keep what arrived, unlock input
+                    Ok(None) => {
+                        let _ = tx.send(ApiEvent::ChatDone {
+                            tokens_per_sec: None,
+                        });
+                        return;
+                    }
+                    Err(e) => {
+                        let _ = tx.send(ApiEvent::ChatError(e.to_string()));
+                        return;
+                    }
+                };
+                if let Some(err) = &chunk.error {
+                    let _ = tx.send(ApiEvent::ChatError(err.clone()));
+                    return;
+                }
+                if let Some(msg) = &chunk.message {
+                    if !msg.content.is_empty() {
+                        let _ = tx.send(ApiEvent::ChatToken(msg.content.clone()));
+                    }
+                }
+                if chunk.done == Some(true) {
+                    let tokens_per_sec = chunk
+                        .eval_count
+                        .zip(chunk.eval_duration)
+                        .filter(|(_, dur)| *dur > 0)
+                        .map(|(count, dur)| {
+                            use crate::format::tokens_per_sec;
+                            tokens_per_sec(count, dur)
+                        });
+                    let _ = tx.send(ApiEvent::ChatDone { tokens_per_sec });
+                    return;
                 }
             }
         });

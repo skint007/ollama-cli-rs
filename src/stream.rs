@@ -105,7 +105,6 @@ impl ChatStream {
 pub struct OpenAiChatStream {
     sse: SseStream,
     started: Instant,
-    first_token: Option<Instant>,
     last_token: Option<Instant>,
     completion_tokens: Option<u64>,
     finished: bool,
@@ -116,7 +115,6 @@ impl OpenAiChatStream {
         Self {
             sse,
             started,
-            first_token: None,
             last_token: None,
             completion_tokens: None,
             finished: false,
@@ -145,15 +143,14 @@ impl OpenAiChatStream {
             let content: String = chunk
                 .choices
                 .iter()
-                .filter_map(|c| c.delta.content.as_deref())
+                .flatten()
+                .filter_map(|c| c.delta.as_ref()?.content.as_deref())
                 .collect();
             if content.is_empty() {
                 continue;
             }
 
-            let now = Instant::now();
-            self.first_token.get_or_insert(now);
-            self.last_token = Some(now);
+            self.last_token = Some(Instant::now());
             return Ok(Some(ChatResponse {
                 message: Some(ChatMessage {
                     role: "assistant".to_string(),
@@ -168,11 +165,13 @@ impl OpenAiChatStream {
 
     /// Final chunk with timing measured client-side, since OpenAI streams carry
     /// token counts (when the backend honors `include_usage`) but no durations.
+    /// Generation time runs from the request to the last token: chunk arrival
+    /// times are unreliable when a proxy buffers the stream, and this includes
+    /// prompt processing, so the rate reads slightly low rather than absurdly high.
     fn done_chunk(&self) -> ChatResponse {
         let eval_duration = self
-            .first_token
-            .zip(self.last_token)
-            .map(|(first, last)| (last - first).as_nanos() as u64)
+            .last_token
+            .map(|last| (last - self.started).as_nanos() as u64)
             .filter(|&nanos| nanos > 0);
         ChatResponse {
             done: Some(true),

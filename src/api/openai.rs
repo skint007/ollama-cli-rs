@@ -77,23 +77,23 @@ pub struct CompletionChoice {
     pub message: CompletionMessage,
 }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize)]
 pub struct CompletionMessage {
     pub content: Option<String>,
 }
 
+// Fields are optional because some backends send explicit nulls
+
 #[derive(Debug, Deserialize)]
 pub struct ChatCompletionChunk {
-    #[serde(default)]
-    pub choices: Vec<ChunkChoice>,
+    pub choices: Option<Vec<ChunkChoice>>,
     pub usage: Option<Usage>,
     pub error: Option<Value>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct ChunkChoice {
-    #[serde(default)]
-    pub delta: CompletionMessage,
+    pub delta: Option<CompletionMessage>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -177,8 +177,9 @@ mod tests {
             options: Some(json!({ "temperature": 0.2, "num_predict": 50 })),
         };
 
-        let body = serde_json::to_value(ChatCompletionRequest::from_ollama(&request, true).unwrap())
-            .unwrap();
+        let body =
+            serde_json::to_value(ChatCompletionRequest::from_ollama(&request, true).unwrap())
+                .unwrap();
 
         assert_eq!(body["model"], "gpt-4o");
         assert_eq!(body["stream"], true);
@@ -195,19 +196,24 @@ mod tests {
             model: "m".to_string(),
             ..Default::default()
         };
-        let body = serde_json::to_value(ChatCompletionRequest::from_ollama(&request, false).unwrap())
-            .unwrap();
+        let body =
+            serde_json::to_value(ChatCompletionRequest::from_ollama(&request, false).unwrap())
+                .unwrap();
         assert!(body.get("stream_options").is_none());
         assert!(body.get("response_format").is_none());
     }
 
     #[test]
     fn chunk_parses_delta_usage_and_error() {
-        let chunk: ChatCompletionChunk = serde_json::from_str(
-            r#"{"choices":[{"index":0,"delta":{"content":"Hel"}}]}"#,
-        )
-        .unwrap();
-        assert_eq!(chunk.choices[0].delta.content.as_deref(), Some("Hel"));
+        let chunk: ChatCompletionChunk =
+            serde_json::from_str(r#"{"choices":[{"index":0,"delta":{"content":"Hel"}}]}"#).unwrap();
+        let delta = |c: &ChatCompletionChunk| {
+            c.choices.as_ref().unwrap()[0]
+                .delta
+                .as_ref()
+                .and_then(|d| d.content.clone())
+        };
+        assert_eq!(delta(&chunk).as_deref(), Some("Hel"));
 
         let usage: ChatCompletionChunk =
             serde_json::from_str(r#"{"choices":[],"usage":{"completion_tokens":7}}"#).unwrap();
@@ -215,10 +221,20 @@ mod tests {
 
         let role_only: ChatCompletionChunk =
             serde_json::from_str(r#"{"choices":[{"delta":{"role":"assistant"}}]}"#).unwrap();
-        assert!(role_only.choices[0].delta.content.is_none());
+        assert!(delta(&role_only).is_none());
+
+        let nulls: ChatCompletionChunk =
+            serde_json::from_str(r#"{"choices":null,"usage":null}"#).unwrap();
+        assert!(nulls.choices.is_none());
+        let null_delta: ChatCompletionChunk =
+            serde_json::from_str(r#"{"choices":[{"delta":null}]}"#).unwrap();
+        assert!(delta(&null_delta).is_none());
 
         let err: ChatCompletionChunk =
             serde_json::from_str(r#"{"error":{"message":"bad key"}}"#).unwrap();
-        assert_eq!(super::super::types::error_text(&err.error.unwrap()), "bad key");
+        assert_eq!(
+            super::super::types::error_text(&err.error.unwrap()),
+            "bad key"
+        );
     }
 }
